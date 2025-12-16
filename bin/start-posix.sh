@@ -11,7 +11,7 @@ ZGW_POSIX_PORT=${ZGW_POSIX_PORT:-9090}
 [ -d "${ZGW_DB_PATH}" ] || mkdir -p ${ZGW_DB_PATH}
 [ -d "${ZGW_STORE_PATH}" ] || mkdir -p ${ZGW_STORE_PATH}
 
-if [[ $(podman ps -a -f "status=running,name=zgw-posix" --format="{{.ID}}") ]] ; then
+if [[ $(podman ps -a -f status=running -f name=zgw-posix --format="{{.ID}}") ]] ; then
   echo "zgw-posix container already running"
 else
   podman run --name zgw-posix \

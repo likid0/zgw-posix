@@ -1,6 +1,6 @@
 #!/bin/bash
 
-if [[ $(podman ps -a -f "status=running,name=zgw-posix" --format="{{.ID}}") ]] ; then
+if [[ $(podman ps -a -f status=running -f name=zgw-posix --format="{{.ID}}") ]] ; then
   podman kill zgw-posix
   podman rm zgw-posix
 else
