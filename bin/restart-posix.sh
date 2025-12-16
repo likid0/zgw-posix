@@ -7,9 +7,9 @@ ZGW_STORE_PATH=${ZGW_STORE_PATH:-${HOME}/store}
 ZGW_POSIX_PORT=${ZGW_POSIX_PORT:-9090}
 
 # Create directories if they don't exist
-mkdir -p ${ZGW_POSIX_PATH}
-mkdir -p ${ZGW_DB_PATH}
-mkdir -p ${ZGW_STORE_PATH}
+[ -d "${ZGW_POSIX_PATH}" ] || mkdir -p ${ZGW_POSIX_PATH}
+[ -d "${ZGW_DB_PATH}" ] || mkdir -p ${ZGW_DB_PATH}
+[ -d "${ZGW_STORE_PATH}" ] || mkdir -p ${ZGW_STORE_PATH}
 
 run_zgw_posix () {
   podman run --name zgw-posix \
