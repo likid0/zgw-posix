@@ -100,7 +100,7 @@ kubectl apply -f examples/openshift/zgw-posix.yaml
 ```
 
 This creates:
-- Two PersistentVolumeClaims (one for POSIX driver data, one for database)
+- Three PersistentVolumeClaims (for POSIX driver data, database, and radosgw store)
 - A deployment running the zgw-posix container
 - A service exposing S3 API on port 80
 
@@ -149,17 +149,32 @@ The POSIX filter driver adds a POSIX filesystem layer on top of dbstore, allowin
 objects to be accessed via both S3 API and POSIX filesystem operations.
 
 Set environmental variables if you want to override the default set of
-credentials for the `zippy` user and customize storage paths.
+credentials for the `zippy` user and customize storage paths and the port to
+listen on.
 
 ```
-podman run -it zgw-posix:latest \
-  -v /mnt/posix:/var/lib/ceph/rgw_posix_driver \
-  -v /mnt/db:/var/lib/ceph/rgw_posix_db \
+mkdir ~/posix ; mkdir ~/db ; mkdir ~/store 
+
+podman run -d \
+  -v ~/posix:/var/lib/ceph/rgw_posix_driver:rw,Z \
+  -v ~/db:/var/lib/ceph/rgw_posix_db:rw,Z \
+  -v ~/store:/var/lib/ceph/radosgw:rw,Z \
   -e COMPONENT=zgw-posix \
-  -e AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID \
-  -e AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY \
+  -e AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-zippy} \
+  -e AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-zippy} \
   -e RGW_POSIX_BASE_PATH=/var/lib/ceph/rgw_posix_driver \
-  -e RGW_POSIX_DATABASE_ROOT=/var/lib/ceph/rgw_posix_db
+  -e RGW_POSIX_DATABASE_ROOT=/var/lib/ceph/rgw_posix_db \
+  -p 9090:7480 \
+  zgw-posix:latest
+
+$ cat .aws/credentials
+[zipy]
+aws_access_key_id = zippy
+aws_secret_access_key = zippy
+
+$ aws --profile zipy --endpoint http://localhost:9090 s3 mb s3://bucket --region default
+$ aws --profile zipy --endpoint http://localhost:9090 s3 cp /etc/hosts s3://bucket/ok --region default
+upload: ../../etc/hosts to s3://bucket/ok
 ```
 
 You can also use the helper scripts in the `bin/` directory:

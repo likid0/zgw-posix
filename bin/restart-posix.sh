@@ -1,17 +1,28 @@
 #!/bin/bash
 
+# Configurable data paths - override these by setting environment variables
+ZGW_POSIX_PATH=${ZGW_POSIX_PATH:-${HOME}/posix}
+ZGW_DB_PATH=${ZGW_DB_PATH:-${HOME}/db}
+ZGW_STORE_PATH=${ZGW_STORE_PATH:-${HOME}/store}
+ZGW_POSIX_PORT=${ZGW_POSIX_PORT:-9090}
+
+# Create directories if they don't exist
+mkdir -p ${ZGW_POSIX_PATH}
+mkdir -p ${ZGW_DB_PATH}
+mkdir -p ${ZGW_STORE_PATH}
+
 run_zgw_posix () {
   podman run --name zgw-posix \
-           --user 167:167 \
-           -p 7480:7480 \
-           -v zgw-posix-driver:/var/lib/ceph/rgw_posix_driver \
-           -v zgw-posix-db:/var/lib/ceph/rgw_posix_db \
+           -v ${ZGW_POSIX_PATH}:/var/lib/ceph/rgw_posix_driver:rw,Z \
+           -v ${ZGW_DB_PATH}:/var/lib/ceph/rgw_posix_db:rw,Z \
+           -v ${ZGW_STORE_PATH}:/var/lib/ceph/radosgw:rw,Z \
            -e COMPONENT=zgw-posix \
            -e AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-zippy} \
            -e AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-zippy} \
            -e RGW_POSIX_BASE_PATH=/var/lib/ceph/rgw_posix_driver \
            -e RGW_POSIX_DATABASE_ROOT=/var/lib/ceph/rgw_posix_db \
-           -dt quay.io/mmgaggle/zgw-posix:latest
+           -p ${ZGW_POSIX_PORT}:7480 \
+           -d zgw-posix:latest
 }
 
 if [[ $(podman ps -a -f "status=running,name=zgw-posix" --format="{{.ID}}") ]] ; then

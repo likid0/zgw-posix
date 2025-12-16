@@ -54,6 +54,19 @@ spec:
     requests:
       storage: 5Gi
 ---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: zgw-posix-store-pvc
+  labels:
+    app.kubernetes.io/name: zgw-posix
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -81,6 +94,9 @@ spec:
         - name: zgw-posix-db-pvc
           persistentVolumeClaim:
             claimName: zgw-posix-db-pvc
+        - name: zgw-posix-store-pvc
+          persistentVolumeClaim:
+            claimName: zgw-posix-store-pvc
       containers:
       - name: zgw-posix
         image: quay.io/mmgaggle/zgw-posix:latest
@@ -91,6 +107,8 @@ spec:
             name: zgw-posix-driver-pvc
           - mountPath: "/var/lib/ceph/rgw_posix_db"
             name: zgw-posix-db-pvc
+          - mountPath: "/var/lib/ceph/radosgw"
+            name: zgw-posix-store-pvc
         env:
           - name: COMPONENT
             value: zgw-posix
