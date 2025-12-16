@@ -99,7 +99,7 @@ spec:
             claimName: zgw-posix-store-pvc
       containers:
       - name: zgw-posix
-        image: quay.io/mmgaggle/zgw-posix:latest
+        image: quay.io/dparkes/zgw-posix:latest
         ports:
         - containerPort: 7480
         volumeMounts:
