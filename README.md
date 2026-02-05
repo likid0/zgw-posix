@@ -6,6 +6,8 @@ The Ceph object gateway has conventionally carried the name radosgw, or rgw for 
 
 This was made possible by the Zipper initiative, which introduced a layering API based on stackable modules/drivers, similar to Unix filesystems (VFS).
 
+## This is a fork and cleanup of Kyle Bader's work in https://github.com/mmgaggle/zgw/tree/main
+
 ## Quick Start (Podman)
 
 ```bash
