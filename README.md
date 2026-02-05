@@ -1,205 +1,272 @@
-# Z is for zipper: S3 gateway
+# Z is for Zipper: S3 Gateway (POSIX)
 
-zgw-dbstore is a light weight S3 server dialect based on the Ceph object
-gateway that persists objects and metadata into a SQLite database. If you've
-ever wanted to use Ceph's object gateway, without deploying a cluster, this is
-for you!
+zgw-posix is a lightweight S3 server based on the Ceph object gateway that stores objects directly on a POSIX filesystem. Access your data via S3 API or browse it as regular files.
 
-The Ceph object gateway has conventionally carried the name radosgw, or rgw for
-short. [RADOS](https://ceph.com/assets/pdfs/weil-rados-pdsw07.pdf) is Ceph's
-native object storage system. Sans RADOS, the radosgw is the /zgw/.
+The Ceph object gateway has conventionally carried the name radosgw, or rgw for short. [RADOS](https://ceph.com/assets/pdfs/weil-rados-pdsw07.pdf) is Ceph's native object storage system. Sans RADOS, the radosgw is the *zgw*.
 
-This was made possible by the Zipper initiative, which introduced a layering API
-based on stackable modules/drivers, similar to Unix filesystems (VFS). A number
-of store drivers SALs exist already:
+This was made possible by the Zipper initiative, which introduced a layering API based on stackable modules/drivers, similar to Unix filesystems (VFS).
 
-* [DBstore](https://github.com/ceph/ceph/tree/main/src/rgw/store/dbstore) - Reference implementation
-* [cortx-rgw](https://github.com/Seagate/cortx-rgw) for [Seagate CORTX](https://github.com/Seagate/cortx)
-* [daos](https://github.com/ceph/ceph/pull/47709) for [Intel DAOS](https://github.com/daos-stack/daos)
-* [sfs](https://github.com/aquarist-labs/ceph/tree/s3gw/src/rgw/store/sfs) for [SUSE s3gw](https://github.com/aquarist-labs/s3gw-tools/)
+## Quick Start (Podman)
 
-This repository is intended to provide tooling to build container images for
-the Ceph object gateway with the dbstore store driver and POSIX filter driver.
-
-# Kubernetes Deployments
-
-## minikube zgw-dbstore
-
-### Create zgw-dbstore resources
-
-```
-kubectl apply -f examples/openshift/zgw-dbstore.yaml
-```
-
-### Create toolbox resources
-
-The toolbox includes pre-configured CLI tools to interact with zgw-dbstore:
-
-* s5cmd: blazing fast s3 client
-* warp: s3 benchmarking utility
-
-To create a toolbox pod, use:
-
-```
-kubectl apply -f examples/openshift/zgw-toolbox.yaml
-```
-
-### Enter zgw-toolbox pod
-
-```
-TOOLBOX_ID=$(kubectl get po | grep toolbox | awk '{print $1}')
-kubectl exec --stdin --tty ${TOOLBOX_ID} -- /bin/bash
-```
-
-### Using s5cmd
-
-The container entrypoint sets up credentials for s5cmd.
-
-```
-s5cmd --endpoint-url http://s3.default.svc.cluster.local \
-  mb s3://mybucket
-```
-
-Grab some sample data and upload it.
-
-```
-cd /tmp
-curl -LO https://d37ci6vzurychx.cloudfront.net/misc/taxi+_zone_lookup.csv
-s5cmd --endpoint-url http://s3.default.svc.cluster.local \
-  cp taxi+_zone_lookup.csv s3://mybucket
-```
-
-### Query sample CSV object with S3 Select
-```
-aws s3api select-object-content \
-  --endpoint-url http://s3.default.svc.cluster.local \
-  --bucket 'mybucket' \
-  --key 'taxi+_zone_lookup.csv' \
-  --expression "SELECT * FROM S3Object s where s._2='\"Brooklyn\"'" \
-  --expression-type 'SQL' \
-  --input-serialization '{"CSV": {"FieldDelimiter": ",","RecordDelimiter": "\n" ,  "FileHeaderInfo": "IGNORE" }}' \
-  --output-serialization '{"CSV": {"FieldDelimiter": ":"}}' /dev/stdout
-```
-
-### Run warp benchmark
-```
-warp put --host s3.default.svc.cluster.local:80 \
-  --access-key zippy \
-  --secret-key zippy \
-  --duration 15s
-```
-
-## minikube zgw-posix
-
-The POSIX filter driver provides a POSIX filesystem interface on top of dbstore.
-
-### Create zgw-posix resources
-
-```
-kubectl apply -f examples/openshift/zgw-posix.yaml
-```
-
-This creates:
-- Three PersistentVolumeClaims (for POSIX driver data, database, and radosgw store)
-- A deployment running the zgw-posix container
-- A service exposing S3 API on port 80
-
-### Access zgw-posix
-
-The service is available at `http://s3-posix.default.svc.cluster.local` within the cluster.
-
-You can use the same toolbox and s5cmd commands as with zgw-dbstore, just update the endpoint:
-
-```
-s5cmd --endpoint-url http://s3-posix.default.svc.cluster.local mb s3://mybucket
-```
-
-# Podman Deployments
-
-## podman zgw-dbstore
-
-Set environmental variables if you want to override the default set of
-credentials for the `zippy` user.
-
-```
-podman run -it zgw-dbstore:latest \
-  -v /mnt:/var/lib/ceph/radosgw \
-  -p 7480:7480 \
-  -e COMPONENT=zgw-dbstore \
-  -e AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-zippy} \
-  -e AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-zippy}
-```
-
-Or use the helper scripts in the `bin/` directory:
-
-```
-# Start zgw-dbstore container
-./bin/start.sh
-
-# Restart zgw-dbstore container
-./bin/restart.sh
-
-# Stop zgw-dbstore container
-./bin/stop.sh
-```
-
-## podman zgw-posix
-
-The POSIX filter driver adds a POSIX filesystem layer on top of dbstore, allowing
-objects to be accessed via both S3 API and POSIX filesystem operations.
-
-Set environmental variables if you want to override the default set of
-credentials for the `zippy` user and customize storage paths and the port to
-listen on.
-
-```
-mkdir ~/posix ; mkdir ~/db ; mkdir ~/store 
-
-podman run -d \
-  -v ~/posix:/var/lib/ceph/rgw_posix_driver:rw,Z \
-  -v ~/db:/var/lib/ceph/rgw_posix_db:rw,Z \
-  -v ~/store:/var/lib/ceph/radosgw:rw,Z \
-  -e COMPONENT=zgw-posix \
-  -e AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-zippy} \
-  -e AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-zippy} \
-  -e RGW_POSIX_BASE_PATH=/var/lib/ceph/rgw_posix_driver \
-  -e RGW_POSIX_DATABASE_ROOT=/var/lib/ceph/rgw_posix_db \
-  -p 9090:7480 \
-  zgw-posix:latest
-
-$ cat .aws/credentials
-[zipy]
-aws_access_key_id = zippy
-aws_secret_access_key = zippy
-
-$ aws --profile zipy --endpoint http://localhost:9090 s3 mb s3://bucket --region default
-$ aws --profile zipy --endpoint http://localhost:9090 s3 cp /etc/hosts s3://bucket/ok --region default
-upload: ../../etc/hosts to s3://bucket/ok
-```
-
-You can also use the helper scripts in the `bin/` directory:
-
-```
-# Start zgw-posix container
+```bash
+# 1. Start the gateway (creates ~/zgw-data automatically)
 ./bin/start-posix.sh
 
-# Restart zgw-posix container
+# 2. Test with AWS CLI
+AWS_ACCESS_KEY_ID=zippy AWS_SECRET_ACCESS_KEY=zippy \
+  aws --endpoint-url http://localhost:9090 s3 mb s3://mybucket
+
+AWS_ACCESS_KEY_ID=zippy AWS_SECRET_ACCESS_KEY=zippy \
+  aws --endpoint-url http://localhost:9090 s3 cp /etc/hosts s3://mybucket/hosts
+
+# 3. Verify the file exists on the filesystem
+ls ~/zgw-data/posix/mybucket/
+```
+
+## Understanding Directory Mapping
+
+The zgw-posix container uses a single data directory with three subdirectories. This simplifies deployment - you only need one volume/PVC.
+
+### Volume Architecture
+
+```
+HOST                              CONTAINER                           PURPOSE
+~/zgw-data/
+├── posix/  ───────────────────► /var/lib/ceph/rgw_posix_driver      S3 objects as files
+├── db/     ───────────────────► /var/lib/ceph/rgw_posix_db          Metadata (LMDB)
+└── store/  ───────────────────► /var/lib/ceph/radosgw               Users & policies
+```
+
+### Volume Details
+
+| Subdirectory | Container Path | Purpose | Size Guidance |
+|--------------|----------------|---------|---------------|
+| `posix/` | `/var/lib/ceph/rgw_posix_driver` | S3 objects stored as regular files | Size of your data |
+| `db/` | `/var/lib/ceph/rgw_posix_db` | LMDB database for bucket/object metadata | ~1% of data size |
+| `store/` | `/var/lib/ceph/radosgw` | DBStore for users, policies, configuration | 1-5 GB typical |
+
+### SELinux and the :Z Flag
+
+On SELinux-enabled systems (RHEL, Fedora, CentOS), the `:Z` flag is required for volume mounts:
+
+```bash
+-v ~/zgw-data/posix:/var/lib/ceph/rgw_posix_driver:rw,Z
+```
+The `:Z` option tells Podman to relabel the volume content with a private unshared label. This allows the container to read and write to the mounted directory.
+
+
+## Podman Deployment
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ZGW_DATA_PATH` | `~/zgw-data` | Parent directory for all data (posix/, db/, store/) |
+| `ZGW_POSIX_PORT` | `9090` | Port to expose S3 API |
+| `AWS_ACCESS_KEY_ID` | `zippy` | S3 access key |
+| `AWS_SECRET_ACCESS_KEY` | `zippy` | S3 secret key |
+
+### Using Helper Scripts
+
+The `bin/` directory contains helper scripts with consistent interfaces:
+
+```bash
+# Start the gateway
+./bin/start-posix.sh
+
+# Check status
+./bin/status-posix.sh
+
+# Restart (preserves config)
 ./bin/restart-posix.sh
 
-# Stop zgw-posix container
+# Stop and remove
 ./bin/stop-posix.sh
 ```
 
-# Building containers
+All scripts support common flags:
 
-## Building zgw:dbstore container
-
+```bash
+./bin/start-posix.sh --help      # Show usage
+./bin/start-posix.sh --verbose   # Detailed output
+./bin/start-posix.sh --dry-run   # Preview commands
 ```
-docker build -t zgw-dbstore docker/zgw-dbstore
+
+Additional start options:
+
+```bash
+# Force replace running container
+./bin/start-posix.sh --force
+
+# Use custom data directory
+./bin/start-posix.sh -d /mnt/s3-storage
+
+# Use custom image
+./bin/start-posix.sh --image quay.io/dparkes/zgw-posix:latest
+
+# Custom container name
+./bin/start-posix.sh --name my-s3-gateway
 ```
 
-## Building zgw:posix container
+### Configure AWS CLI
 
+Add a profile to `~/.aws/credentials`:
+
+```ini
+[zgw]
+aws_access_key_id = zippy
+aws_secret_access_key = zippy
 ```
+
+Use it with:
+
+```bash
+aws --profile zgw --endpoint-url http://localhost:9090 s3 ls
+```
+
+## Kubernetes/OpenShift Deployment
+
+### Prerequisites
+
+- Kubernetes cluster (minikube, OpenShift, etc.)
+- `kubectl` or `oc` CLI configured to access your cluster
+- A StorageClass for persistent volumes
+
+### Deploy on OpenShift
+
+The manifest includes a dedicated ServiceAccount and SecurityContextConstraints (SCC)
+for the ceph user (UID 167), so no manual SCC grants are needed.
+
+```bash
+# Create a new project
+oc new-project zgw
+
+# Apply the manifest with your storage class
+cat examples/openshift/zgw-posix.yaml | \
+  sed 's/storage: 20Gi/storage: 20Gi\n  storageClassName: YOUR-STORAGE-CLASS/' | \
+  oc apply -f -
+
+# Wait for pod to be ready
+oc wait --for=condition=ready pod -l app.kubernetes.io/name=zgw-posix --timeout=180s
+
+# Verify the pod is using the zgw-posix-scc
+oc get pod -l app.kubernetes.io/name=zgw-posix \
+  -o jsonpath='{.items[0].metadata.annotations.openshift\.io/scc}'
+```
+
+### Deploy on Kubernetes
+
+```bash
+# Apply the manifest
+kubectl apply -f examples/openshift/zgw-posix.yaml
+
+# Wait for pod to be ready
+kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=zgw-posix
+
+# Check status
+kubectl get pods -l app.kubernetes.io/name=zgw-posix
+```
+
+The manifest creates:
+- **Secret**: S3 credentials (`zgw-posix-user`)
+- **ConfigMap**: Ceph configuration
+- **PVC**: Single persistent volume for all data (uses subPath mounts)
+- **Deployment**: The zgw-posix container with resource limits and health probes
+- **Service**: S3 API exposed at `http://s3-posix.<namespace>.svc.cluster.local`
+- **Route**: External access via OpenShift router (HTTPS with TLS termination)
+
+### External Access (OpenShift Route)
+
+The manifest includes an OpenShift Route for external access:
+
+```bash
+# Get the external S3 endpoint URL
+oc get route s3-posix -o jsonpath='https://{.spec.host}'
+
+# Example: https://s3-posix-zgw.apps.mycluster.example.com
+```
+
+Use the external URL with AWS CLI:
+
+```bash
+aws --endpoint-url https://s3-posix-zgw.apps.mycluster.example.com \
+    --region default s3 ls
+```
+
+For Kubernetes clusters without OpenShift, uncomment the Ingress resource in the manifest and configure your domain.
+
+### Test S3 Operations from the Cluster
+
+Create a bucket:
+
+```bash
+oc run s3-test --rm -i --restart=Never \
+  --image=amazon/aws-cli:latest \
+  --env="AWS_ACCESS_KEY_ID=zippy" \
+  --env="AWS_SECRET_ACCESS_KEY=zippy" \
+  -- --endpoint-url http://s3-posix.zgw-test.svc.cluster.local \
+     --region default s3 mb s3://test-bucket
+```
+
+Upload a file:
+
+```bash
+oc run s3-test --rm -i --restart=Never \
+  --image=amazon/aws-cli:latest \
+  --env="AWS_ACCESS_KEY_ID=zippy" \
+  --env="AWS_SECRET_ACCESS_KEY=zippy" \
+  -- --endpoint-url http://s3-posix.zgw-test.svc.cluster.local \
+     --region default s3 cp /etc/hostname s3://test-bucket/hostname
+```
+
+List bucket contents:
+
+```bash
+oc run s3-test --rm -i --restart=Never \
+  --image=amazon/aws-cli:latest \
+  --env="AWS_ACCESS_KEY_ID=zippy" \
+  --env="AWS_SECRET_ACCESS_KEY=zippy" \
+  -- --endpoint-url http://s3-posix.zgw-test.svc.cluster.local \
+     --region default s3 ls s3://test-bucket/
+```
+
+Verify file on POSIX filesystem:
+
+```bash
+oc exec deployment/zgw-posix -- ls -la /var/lib/ceph/rgw_posix_driver/test-bucket/
+oc exec deployment/zgw-posix -- cat /var/lib/ceph/rgw_posix_driver/test-bucket/hostname
+```
+
+### Using with Jupyter
+
+Deploy a Jupyter notebook pre-configured with zgw-posix credentials:
+
+```bash
+# Ensure zgw-posix is running first
+oc apply -f examples/openshift/zgw-notebook.yaml
+
+# Port forward to access notebook
+oc port-forward svc/jupyter 8888:80
+```
+
+Open http://localhost:8888 in your browser.
+
+### Access from within the cluster
+
+```bash
+# Using s5cmd
+s5cmd --endpoint-url http://s3-posix.<namespace>.svc.cluster.local mb s3://mybucket
+
+# Using AWS CLI
+aws --endpoint-url http://s3-posix.<namespace>.svc.cluster.local --region default s3 ls
+```
+
+## Building the Container
+
+```bash
+# Build the zgw-posix image
 docker build -t zgw-posix docker/zgw-posix
+
+# Or with podman
+podman build -t zgw-posix docker/zgw-posix
 ```

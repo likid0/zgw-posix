@@ -1,24 +1,49 @@
+# =============================================================================
+# zgw-notebook.yaml - Jupyter Notebook for interacting with zgw-posix
+# =============================================================================
+#
+# Prerequisites:
+#   - Apply zgw-posix.yaml first: kubectl apply -f zgw-posix.yaml
+#   - Wait for zgw-posix pod to be ready: kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=zgw-posix
+#
+# This manifest deploys a Jupyter notebook pre-configured to connect to the
+# zgw-posix S3 gateway. AWS credentials are automatically injected from the
+# zgw-posix-user secret.
+#
+# Usage:
+#   kubectl apply -f zgw-notebook.yaml
+#   kubectl port-forward svc/jupyter 8888:80
+#   # Open http://localhost:8888 in your browser
+#
+# =============================================================================
+
+---
 apiVersion: v1
 kind: Service
 metadata:
   name: jupyter
   labels:
-    app: jupyter
+    app.kubernetes.io/name: jupyter
+    app.kubernetes.io/component: notebook
+    app.kubernetes.io/part-of: zgw
 spec:
   ports:
   - port: 80
     name: http
     targetPort: 8888
   selector:
-    app: jupyter
+    app.kubernetes.io/name: jupyter
   type: LoadBalancer
+
 ---
 apiVersion: v1
 kind: Pod
 metadata:
   name: jupyter
   labels:
-    app: jupyter
+    app.kubernetes.io/name: jupyter
+    app.kubernetes.io/component: notebook
+    app.kubernetes.io/part-of: zgw
 spec:
   containers:
     - name: jupyter
@@ -31,16 +56,20 @@ spec:
         - mountPath: /root
           name: notebook-volume
       env:
+        # S3 endpoint for zgw-posix service
+        - name: S3_ENDPOINT_URL
+          value: "http://s3-posix.default.svc.cluster.local"
+        # AWS credentials from zgw-posix-user secret
         - name: AWS_SECRET_ACCESS_KEY
           valueFrom:
             secretKeyRef:
-              name: zgw-user
+              name: zgw-posix-user
               key: SECRET_KEY
               optional: false
         - name: AWS_ACCESS_KEY_ID
           valueFrom:
             secretKeyRef:
-              name: zgw-user
+              name: zgw-posix-user
               key: ACCESS_KEY
               optional: false
   volumes:

@@ -1,78 +1,254 @@
+# =============================================================================
+# zgw-posix.yaml - S3 Gateway with POSIX Backend for Kubernetes/OpenShift
+# =============================================================================
+#
+# This manifest deploys the zgw-posix S3 gateway, which provides an S3-compatible
+# API backed by a POSIX filesystem. Objects stored via S3 are accessible as
+# regular files on the underlying filesystem.
+#
+# Components:
+#   - ServiceAccount: Dedicated SA for zgw-posix pods
+#   - SecurityContextConstraints: OpenShift SCC allowing ceph user (UID 167)
+#   - Secret: S3 credentials for the default user
+#   - ConfigMap: Ceph configuration, AWS CLI config, and shell helpers
+#   - PersistentVolumeClaim: Single PVC for all data (uses subPath mounts)
+#   - Deployment: The zgw-posix container with resource limits and health probes
+#   - Service: Exposes S3 API on port 80
+#
+# Usage (OpenShift):
+#   oc new-project zgw
+#   oc apply -f zgw-posix.yaml
+#   oc get pods -l app.kubernetes.io/name=zgw-posix
+#
+# Usage (Kubernetes):
+#   kubectl create namespace zgw
+#   kubectl apply -f zgw-posix.yaml -n zgw
+#
+# Access:
+#   Within cluster: http://s3-posix.<namespace>.svc.cluster.local
+#
+# =============================================================================
+
 ---
+# -----------------------------------------------------------------------------
+# ServiceAccount: Dedicated service account for zgw-posix
+# -----------------------------------------------------------------------------
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: zgw-posix-sa
+  labels:
+    app.kubernetes.io/name: zgw-posix
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/part-of: zgw
+
+---
+# -----------------------------------------------------------------------------
+# SecurityContextConstraints: Allow ceph user (UID 167) - OpenShift only
+# -----------------------------------------------------------------------------
+# This SCC allows the zgw-posix pod to run as the ceph user (UID 167).
+# On plain Kubernetes, this resource will be ignored (unknown API).
+# -----------------------------------------------------------------------------
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: zgw-posix-scc
+  labels:
+    app.kubernetes.io/name: zgw-posix
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/part-of: zgw
+allowHostDirVolumePlugin: false
+allowHostIPC: false
+allowHostNetwork: false
+allowHostPID: false
+allowHostPorts: false
+allowPrivilegeEscalation: true
+allowPrivilegedContainer: false
+allowedCapabilities: null
+defaultAddCapabilities: null
+fsGroup:
+  type: MustRunAs
+  ranges:
+    - min: 167
+      max: 167
+groups: []
+priority: null
+readOnlyRootFilesystem: false
+requiredDropCapabilities:
+  - MKNOD
+runAsUser:
+  type: MustRunAs
+  uid: 167
+seLinuxContext:
+  type: MustRunAs
+supplementalGroups:
+  type: MustRunAs
+  ranges:
+    - min: 167
+      max: 167
+users:
+  # Will be populated by the RoleBinding below
+volumes:
+  - configMap
+  - downwardAPI
+  - emptyDir
+  - persistentVolumeClaim
+  - projected
+  - secret
+
+---
+# -----------------------------------------------------------------------------
+# ClusterRole: Use the zgw-posix SCC - OpenShift only
+# -----------------------------------------------------------------------------
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: zgw-posix-scc-role
+  labels:
+    app.kubernetes.io/name: zgw-posix
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/part-of: zgw
+rules:
+  - apiGroups:
+      - security.openshift.io
+    resourceNames:
+      - zgw-posix-scc
+    resources:
+      - securitycontextconstraints
+    verbs:
+      - use
+
+---
+# -----------------------------------------------------------------------------
+# RoleBinding: Bind SCC role to service account - OpenShift only
+# -----------------------------------------------------------------------------
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: zgw-posix-scc-binding
+  labels:
+    app.kubernetes.io/name: zgw-posix
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/part-of: zgw
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: zgw-posix-scc-role
+subjects:
+  - kind: ServiceAccount
+    name: zgw-posix-sa
+
+---
+# -----------------------------------------------------------------------------
+# Secret: S3 credentials for the default "zippy" user
+# -----------------------------------------------------------------------------
 apiVersion: v1
 kind: Secret
 metadata:
   name: zgw-posix-user
   labels:
     app.kubernetes.io/name: zgw-posix
+    app.kubernetes.io/component: credentials
+    app.kubernetes.io/part-of: zgw
 data:
+  # Base64 encoded "zippy" - change these for production!
   SECRET_KEY: emlwcHk=
   ACCESS_KEY: emlwcHk=
+
 ---
+# -----------------------------------------------------------------------------
+# ConfigMap: Ceph configuration, AWS CLI config, and shell helpers
+# -----------------------------------------------------------------------------
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: zgw-posix-cm
   labels:
     app.kubernetes.io/name: zgw-posix
+    app.kubernetes.io/component: config
+    app.kubernetes.io/part-of: zgw
 data:
+  # Ceph radosgw configuration - enables POSIX filter on top of DBStore
+  # Note: The entrypoint generates this dynamically with runtime paths,
+  # but this can be mounted for customization or reference.
   ceph.conf: |
     [client]
         rgw backend store = dbstore
         rgw config store  = dbstore
         rgw filter        = posix
         debug rgw = 20
-  config: |
+        rgw_posix_base_path = /var/lib/ceph/rgw_posix_driver
+        rgw_posix_database_root = /var/lib/ceph/rgw_posix_db
+
+  # AWS CLI config for path-style addressing (required for non-AWS S3)
+  # Mounted to /var/lib/ceph/.aws/config
+  aws-config: |
     [default]
-    addressing_style = path
+    s3 =
+        addressing_style = path
+        signature_version = s3v4
+    region = default
+
+  # Shell functions and helpers for interactive sessions
+  # Mounted to /home/ceph/.bashrc
+  # Using functions instead of aliases for non-interactive shell compatibility
   bashrc: |
-    alias s5cmd="s5cmd --endpoint-url http://s3-posix.default.svc.cluster.local"
+    # S3 endpoint
+    export S3_ENDPOINT="http://s3-posix.zgw.svc.cluster.local"
+
+    # AWS CLI with endpoint configured (function for non-interactive shell support)
+    aws-s3() { aws --endpoint-url "$S3_ENDPOINT" "$@"; }
+    export -f aws-s3
+
+    # s5cmd with endpoint configured
+    s5() { s5cmd --endpoint-url "$S3_ENDPOINT" "$@"; }
+    export -f s5
+
+    # Quick bucket listing
+    lsb() { aws --endpoint-url "$S3_ENDPOINT" --region default s3 ls "$@"; }
+    export -f lsb
+
+    echo "zgw-posix shell ready. S3 endpoint: $S3_ENDPOINT"
+    echo "Commands: aws-s3, s5, lsb (list buckets)"
+
 ---
+# -----------------------------------------------------------------------------
+# PVC: Single volume for all zgw-posix data
+# -----------------------------------------------------------------------------
+# Directory structure inside the PVC:
+#   /posix/  - S3 objects stored as regular files (size of your data)
+#   /db/     - LMDB metadata database (~1% of data size)
+#   /store/  - DBStore for users, policies, config (1-5 GB typical)
+#
+# Size guidance: Sum of expected data + 10% overhead for metadata
+# -----------------------------------------------------------------------------
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: zgw-posix-driver-pvc
+  name: zgw-posix-data
   labels:
     app.kubernetes.io/name: zgw-posix
+    app.kubernetes.io/component: storage
+    app.kubernetes.io/part-of: zgw
 spec:
   accessModes:
     - ReadWriteOnce
   resources:
     requests:
-      storage: 10Gi
+      storage: 20Gi
+
 ---
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: zgw-posix-db-pvc
-  labels:
-    app.kubernetes.io/name: zgw-posix
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 5Gi
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: zgw-posix-store-pvc
-  labels:
-    app.kubernetes.io/name: zgw-posix
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 10Gi
----
+# -----------------------------------------------------------------------------
+# Deployment: zgw-posix S3 Gateway
+# -----------------------------------------------------------------------------
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: zgw-posix
   labels:
-    app: zgw-posix
+    app.kubernetes.io/name: zgw-posix
+    app.kubernetes.io/component: gateway
+    app.kubernetes.io/part-of: zgw
 spec:
   replicas: 1
   selector:
@@ -82,40 +258,104 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: zgw-posix
+        app.kubernetes.io/component: gateway
+        app.kubernetes.io/part-of: zgw
     spec:
+      # Use dedicated service account with SCC permissions
+      serviceAccountName: zgw-posix-sa
+
+      # Run as ceph user (UID 167)
       securityContext:
         runAsUser: 167
         runAsGroup: 167
         fsGroup: 167
+
+      # Init container to create subdirectories
+      initContainers:
+      - name: init-dirs
+        image: quay.io/dparkes/zgw-posix:latest
+        command: ['sh', '-c', 'mkdir -p /data/posix /data/db /data/store && mkdir -p /home/ceph/.aws']
+        volumeMounts:
+          - mountPath: /data
+            name: zgw-data
+          - mountPath: /home/ceph
+            name: ceph-home
+
       volumes:
-        - name: zgw-posix-driver-pvc
+        # Persistent data volume
+        - name: zgw-data
           persistentVolumeClaim:
-            claimName: zgw-posix-driver-pvc
-        - name: zgw-posix-db-pvc
-          persistentVolumeClaim:
-            claimName: zgw-posix-db-pvc
-        - name: zgw-posix-store-pvc
-          persistentVolumeClaim:
-            claimName: zgw-posix-store-pvc
+            claimName: zgw-posix-data
+        # ConfigMap volumes
+        - name: zgw-config
+          configMap:
+            name: zgw-posix-cm
+        # Writable home directory for ceph user
+        - name: ceph-home
+          emptyDir: {}
+
       containers:
       - name: zgw-posix
         image: quay.io/dparkes/zgw-posix:latest
         ports:
         - containerPort: 7480
+          name: s3
+          protocol: TCP
+
+        # Resource requests and limits
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "2Gi"
+            cpu: "2000m"
+
         volumeMounts:
-          - mountPath: "/var/lib/ceph/rgw_posix_driver"
-            name: zgw-posix-driver-pvc
-          - mountPath: "/var/lib/ceph/rgw_posix_db"
-            name: zgw-posix-db-pvc
-          - mountPath: "/var/lib/ceph/radosgw"
-            name: zgw-posix-store-pvc
+          # POSIX data: S3 objects stored as files here
+          - mountPath: /var/lib/ceph/rgw_posix_driver
+            name: zgw-data
+            subPath: posix
+          # Metadata DB: LMDB for bucket/object metadata
+          - mountPath: /var/lib/ceph/rgw_posix_db
+            name: zgw-data
+            subPath: db
+          # Backend store: DBStore for users/policies
+          - mountPath: /var/lib/ceph/radosgw
+            name: zgw-data
+            subPath: store
+          # Ceph configuration from ConfigMap
+          - mountPath: /etc/ceph/ceph.conf
+            name: zgw-config
+            subPath: ceph.conf
+            readOnly: true
+          # Writable home directory
+          - mountPath: /home/ceph
+            name: ceph-home
+          # AWS CLI config from ConfigMap
+          - mountPath: /home/ceph/.aws/config
+            name: zgw-config
+            subPath: aws-config
+            readOnly: true
+          # Bashrc from ConfigMap
+          - mountPath: /home/ceph/.bashrc
+            name: zgw-config
+            subPath: bashrc
+            readOnly: true
+
         env:
+          # Component identifier
           - name: COMPONENT
             value: zgw-posix
+          # POSIX driver configuration
           - name: RGW_POSIX_BASE_PATH
             value: /var/lib/ceph/rgw_posix_driver
           - name: RGW_POSIX_DATABASE_ROOT
             value: /var/lib/ceph/rgw_posix_db
+          # Home directory for ceph user
+          - name: HOME
+            value: /home/ceph
+          # S3 credentials from secret
           - name: AWS_SECRET_ACCESS_KEY
             valueFrom:
               secretKeyRef:
@@ -128,11 +368,38 @@ spec:
                 name: zgw-posix-user
                 key: ACCESS_KEY
                 optional: false
+
+        # Liveness probe: Is the process alive?
+        livenessProbe:
+          tcpSocket:
+            port: 7480
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+
+        # Readiness probe: Is the service ready to accept traffic?
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 7480
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+
 ---
+# -----------------------------------------------------------------------------
+# Service: Expose S3 API
+# -----------------------------------------------------------------------------
 apiVersion: v1
 kind: Service
 metadata:
   name: s3-posix
+  labels:
+    app.kubernetes.io/name: zgw-posix
+    app.kubernetes.io/component: service
+    app.kubernetes.io/part-of: zgw
 spec:
   selector:
     app.kubernetes.io/name: zgw-posix
@@ -140,3 +407,60 @@ spec:
     - protocol: TCP
       port: 80
       targetPort: 7480
+      name: s3
+
+---
+# -----------------------------------------------------------------------------
+# Route: External access to S3 API (OpenShift only)
+# -----------------------------------------------------------------------------
+# Creates an external URL like: s3-posix-<namespace>.apps.<cluster-domain>
+# For Kubernetes, use an Ingress instead (see commented example below)
+# -----------------------------------------------------------------------------
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: s3-posix
+  labels:
+    app.kubernetes.io/name: zgw-posix
+    app.kubernetes.io/component: route
+    app.kubernetes.io/part-of: zgw
+spec:
+  to:
+    kind: Service
+    name: s3-posix
+    weight: 100
+  port:
+    targetPort: s3
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+  wildcardPolicy: None
+
+# -----------------------------------------------------------------------------
+# Ingress: External access to S3 API (Kubernetes alternative)
+# -----------------------------------------------------------------------------
+# Uncomment the following for standard Kubernetes clusters:
+# ---
+# apiVersion: networking.k8s.io/v1
+# kind: Ingress
+# metadata:
+#   name: s3-posix
+#   labels:
+#     app.kubernetes.io/name: zgw-posix
+#     app.kubernetes.io/component: ingress
+#     app.kubernetes.io/part-of: zgw
+#   annotations:
+#     # Adjust annotations based on your ingress controller
+#     nginx.ingress.kubernetes.io/proxy-body-size: "5g"
+# spec:
+#   rules:
+#     - host: s3-posix.example.com  # Change to your domain
+#       http:
+#         paths:
+#           - path: /
+#             pathType: Prefix
+#             backend:
+#               service:
+#                 name: s3-posix
+#                 port:
+#                   name: s3
