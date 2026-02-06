@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "zgw-posix.fullname" . }}-cm
+  labels:
+    {{- include "zgw-posix.labels" . | nindent 4 }}
+data:
+  ceph.conf: |
+    [client]
+        rgw backend store = dbstore
+        rgw config store  = dbstore
+        rgw filter        = posix
+        debug rgw = 20
+        rgw_posix_base_path = /var/lib/ceph/rgw_posix_driver
+        rgw_posix_database_root = /var/lib/ceph/rgw_posix_db
+
+  aws-config: |
+    [default]
+    s3 =
+        addressing_style = path
+        signature_version = s3v4
+    region = default
+
+  bashrc: |
+    export S3_ENDPOINT="http://s3-posix"
+    aws-s3() { aws --endpoint-url "$S3_ENDPOINT" "$@"; }
+    lsb() { aws --endpoint-url "$S3_ENDPOINT" --region default s3 ls "$@"; }
+    export -f aws-s3
+    export -f lsb

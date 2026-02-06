@@ -1,4 +1,4 @@
-FROM quay.ceph.io/ceph-ci/ceph:main
+FROM quay.io/ceph/ceph:v20.2
 
 USER root
 

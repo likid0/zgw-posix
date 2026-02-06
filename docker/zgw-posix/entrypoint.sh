@@ -47,6 +47,11 @@ create_default_user() {
       --secret-key "${AWS_SECRET_ACCESS_KEY:-zippy}"
     set -e
   fi
+
+  # Fix ownership of LMDB files created by radosgw-admin (runs as root).
+  # Without this, radosgw (running as ceph) cannot access the POSIX filter's
+  # LMDB databases and the filter silently fails to load.
+  chown -R ceph:ceph "${RGW_POSIX_BASE_PATH}" "${RGW_POSIX_DATABASE_ROOT}" 2>/dev/null || true
 }
 
 ########################################

@@ -1,0 +1,29 @@
+# Default values for zgw-posix.
+image:
+  repository: quay.io/dparkes/zgw-posix
+  tag: latest
+  pullPolicy: Always
+
+service:
+  name: s3-posix
+  port: 80
+  targetPort: 7480
+
+storage:
+  size: 20Gi
+  storageClass: ""
+  accessMode: ReadWriteOnce
+
+openshift:
+  enabled: true
+  route:
+    enabled: true
+    termination: edge
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 2000m
+    memory: 2Gi

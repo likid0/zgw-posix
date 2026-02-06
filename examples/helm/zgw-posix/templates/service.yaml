@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.service.name | default (include "zgw-posix.fullname" .) }}
+  labels:
+    {{- include "zgw-posix.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.service.port | default 80 }}
+      targetPort: s3
+      protocol: TCP
+      name: s3
+  selector:
+    {{- include "zgw-posix.selectorLabels" . | nindent 4 }}

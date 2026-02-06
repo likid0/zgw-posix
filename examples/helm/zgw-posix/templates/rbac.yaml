@@ -1,0 +1,32 @@
+{{- if .Values.openshift.enabled }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "zgw-posix.fullname" . }}-scc-role
+  labels:
+    {{- include "zgw-posix.labels" . | nindent 4 }}
+rules:
+  - apiGroups:
+      - security.openshift.io
+    resourceNames:
+      - {{ include "zgw-posix.fullname" . }}-scc
+    resources:
+      - securitycontextconstraints
+    verbs:
+      - use
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "zgw-posix.fullname" . }}-scc-binding
+  labels:
+    {{- include "zgw-posix.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "zgw-posix.fullname" . }}-scc-role
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "zgw-posix.fullname" . }}-sa
+    namespace: {{ .Release.Namespace }}
+{{- end }}

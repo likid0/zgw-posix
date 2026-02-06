@@ -1,0 +1,107 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "zgw-posix.fullname" . }}
+  labels:
+    {{- include "zgw-posix.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "zgw-posix.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "zgw-posix.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "zgw-posix.fullname" . }}-sa
+      securityContext:
+        runAsUser: 167
+        runAsGroup: 167
+        fsGroup: 167
+      initContainers:
+      - name: init-dirs
+        image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+        command: ['sh', '-c', 'mkdir -p /data/posix /data/db /data/store && mkdir -p /home/ceph/.aws']
+        volumeMounts:
+        - mountPath: /data
+          name: zgw-data
+        - mountPath: /home/ceph
+          name: ceph-home
+      containers:
+      - name: zgw-posix
+        image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        ports:
+        - containerPort: {{ .Values.service.targetPort }}
+          name: s3
+          protocol: TCP
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+        env:
+        - name: COMPONENT
+          value: zgw-posix
+        - name: RGW_POSIX_BASE_PATH
+          value: /var/lib/ceph/rgw_posix_driver
+        - name: RGW_POSIX_DATABASE_ROOT
+          value: /var/lib/ceph/rgw_posix_db
+        - name: HOME
+          value: /home/ceph
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "zgw-posix.fullname" . }}-user
+              key: ACCESS_KEY
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "zgw-posix.fullname" . }}-user
+              key: SECRET_KEY
+        volumeMounts:
+        - mountPath: /var/lib/ceph/rgw_posix_driver
+          name: zgw-data
+          subPath: posix
+        - mountPath: /var/lib/ceph/rgw_posix_db
+          name: zgw-data
+          subPath: db
+        - mountPath: /var/lib/ceph/radosgw
+          name: zgw-data
+          subPath: store
+        - mountPath: /etc/ceph/ceph.conf
+          name: zgw-config
+          subPath: ceph.conf
+          readOnly: true
+        - mountPath: /home/ceph
+          name: ceph-home
+        - mountPath: /home/ceph/.aws/config
+          name: zgw-config
+          subPath: aws-config
+          readOnly: true
+        - mountPath: /home/ceph/.bashrc
+          name: zgw-config
+          subPath: bashrc
+          readOnly: true
+        livenessProbe:
+          tcpSocket:
+            port: 7480
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 7480
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+      volumes:
+      - name: zgw-data
+        persistentVolumeClaim:
+          claimName: {{ include "zgw-posix.fullname" . }}-data
+      - name: zgw-config
+        configMap:
+          name: {{ include "zgw-posix.fullname" . }}-cm
+      - name: ceph-home
+        emptyDir: {}
