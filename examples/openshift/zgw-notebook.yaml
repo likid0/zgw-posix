@@ -1,31 +1,12 @@
 # =============================================================================
-# zgw-notebook.yaml - Jupyter Notebook for interacting with zgw-posix
+# zgw-notebook.yaml - Final Demo Stack
 # =============================================================================
-#
-# Prerequisites:
-#   - Apply zgw-posix.yaml first: kubectl apply -f zgw-posix.yaml
-#   - Wait for zgw-posix pod to be ready: kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=zgw-posix
-#
-# This manifest deploys a Jupyter notebook pre-configured to connect to the
-# zgw-posix S3 gateway. AWS credentials are automatically injected from the
-# zgw-posix-user secret.
-#
-# Usage:
-#   kubectl apply -f zgw-notebook.yaml
-#   kubectl port-forward svc/jupyter 8888:80
-#   # Open http://localhost:8888 in your browser
-#
-# =============================================================================
-
----
 apiVersion: v1
 kind: Service
 metadata:
-  name: jupyter
+  name: notebook
   labels:
     app.kubernetes.io/name: jupyter
-    app.kubernetes.io/component: notebook
-    app.kubernetes.io/part-of: zgw
 spec:
   ports:
   - port: 80
@@ -33,7 +14,22 @@ spec:
     targetPort: 8888
   selector:
     app.kubernetes.io/name: jupyter
-  type: LoadBalancer
+  type: ClusterIP
+
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: jupyter
+spec:
+  to:
+    kind: Service
+    name: notebook
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
 
 ---
 apiVersion: v1
@@ -45,33 +41,56 @@ metadata:
     app.kubernetes.io/component: notebook
     app.kubernetes.io/part-of: zgw
 spec:
+  # Fix permissions so 'jovyan' (1000) can read 'ceph' (167) files
+  securityContext:
+    fsGroup: 167
+    supplementalGroups: [167]
+  
+  initContainers:
+    - name: install-demo
+      image: busybox
+      command: ['sh', '-c', 'cp /mnt/demo/*.ipynb /home/jovyan/work/ && chown -R 1000:100 /home/jovyan/work/']
+      volumeMounts:
+        - name: demo-config-volume
+          mountPath: /mnt/demo
+        - name: notebook-data
+          mountPath: /home/jovyan/work
+  
   containers:
     - name: jupyter
       image: jupyter/minimal-notebook:latest
+      args: ["start-notebook.sh", "--NotebookApp.token=''", "--NotebookApp.password=''"]
       ports:
       - containerPort: 8888
-        protocol: TCP
         name: http
       volumeMounts:
-        - mountPath: /root
-          name: notebook-volume
+        - name: notebook-data
+          mountPath: /home/jovyan/work
+        - name: zgw-shared-storage
+          mountPath: /var/lib/ceph/rgw_posix_driver
+          subPath: posix
       env:
-        # S3 endpoint for zgw-posix service
+        - name: JUPYTER_PORT
+          value: "8888" 
         - name: S3_ENDPOINT_URL
-          value: "http://s3-posix.default.svc.cluster.local"
-        # AWS credentials from zgw-posix-user secret
+          value: "http://s3-posix"
         - name: AWS_SECRET_ACCESS_KEY
           valueFrom:
             secretKeyRef:
               name: zgw-posix-user
               key: SECRET_KEY
-              optional: false
         - name: AWS_ACCESS_KEY_ID
           valueFrom:
             secretKeyRef:
               name: zgw-posix-user
               key: ACCESS_KEY
-              optional: false
+
   volumes:
-  - name: notebook-volume
-    emptyDir: {}
+    - name: notebook-data
+      emptyDir: {}
+    - name: demo-config-volume
+      configMap:
+        name: zgw-demo-notebook
+    - name: zgw-shared-storage
+      persistentVolumeClaim:
+        claimName: zgw-posix-data
