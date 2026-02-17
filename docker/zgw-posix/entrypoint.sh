@@ -24,9 +24,8 @@ create_ceph_conf() {
   # Create ceph.conf in writable location with all required settings
   cat <<EOF > "${CEPH_CONF}"
 [client]
-    rgw backend store = dbstore
-    rgw config store  = dbstore
-    rgw filter        = posix
+    rgw backend store = posix
+    rgw config store = dbstore
     rgw_posix_base_path = ${RGW_POSIX_BASE_PATH}
     rgw_posix_database_root = ${RGW_POSIX_DATABASE_ROOT}
 EOF

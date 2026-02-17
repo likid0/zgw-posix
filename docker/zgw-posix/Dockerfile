@@ -1,4 +1,6 @@
-FROM quay.io/ceph/ceph:v20.2
+#FROM quay.io/ceph/ceph:v20.2
+FROM quay.ceph.io/ceph-ci/ceph:main
+#FROM quay.ceph.io/ceph-ci/ceph-build:main.centos9.x86_64.default
 
 USER root
 
