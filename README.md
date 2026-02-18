@@ -121,6 +121,16 @@ helm install zgw-posix examples/helm/zgw-posix \
   --set persistence.storageClassName=YOUR-STORAGE-CLASS
 ```
 
+To use custom S3 credentials (default: `zippy` / `zippy`):
+
+```bash
+helm install zgw-posix examples/helm/zgw-posix \
+  --namespace zgw --create-namespace \
+  --set persistence.storageClassName=YOUR-STORAGE-CLASS \
+  --set auth.accessKey=MY_ACCESS_KEY \
+  --set auth.secretKey=MY_SECRET_KEY
+```
+
 ### Verify
 
 ```bash
@@ -145,6 +155,15 @@ For clusters without Helm, use the raw Kubernetes/OpenShift manifest directly.
 - Kubernetes or OpenShift cluster
 - `kubectl` or `oc` CLI configured
 - A StorageClass for persistent volumes
+
+### Custom Credentials
+
+The manifest defaults to `zippy` / `zippy`. To change credentials, generate base64 values and edit the Secret in the YAML before applying:
+
+```bash
+echo -n 'MY_ACCESS_KEY' | base64   # use this for ACCESS_KEY
+echo -n 'MY_SECRET_KEY' | base64   # use this for SECRET_KEY
+```
 
 ### Deploy on OpenShift
 

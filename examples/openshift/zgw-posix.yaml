@@ -140,7 +140,11 @@ subjects:
 
 ---
 # -----------------------------------------------------------------------------
-# Secret: S3 credentials for the default "zippy" user
+# Secret: S3 credentials for the default user
+# To set custom credentials, replace the base64 values below:
+#   echo -n 'YOUR_ACCESS_KEY' | base64
+#   echo -n 'YOUR_SECRET_KEY' | base64
+# Default: zippy / zippy
 # -----------------------------------------------------------------------------
 apiVersion: v1
 kind: Secret
@@ -151,9 +155,8 @@ metadata:
     app.kubernetes.io/component: credentials
     app.kubernetes.io/part-of: zgw
 data:
-  # Base64 encoded "zippy" - change these for production!
-  SECRET_KEY: emlwcHk=
   ACCESS_KEY: emlwcHk=
+  SECRET_KEY: emlwcHk=
 
 ---
 # -----------------------------------------------------------------------------

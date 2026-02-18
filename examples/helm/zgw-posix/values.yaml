@@ -1,4 +1,8 @@
 # Default values for zgw-posix.
+auth:
+  accessKey: zippy
+  secretKey: zippy
+
 image:
   repository: quay.io/dparkes/zgw-posix
   tag: latest
