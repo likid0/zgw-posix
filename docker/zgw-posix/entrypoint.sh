@@ -52,15 +52,18 @@ create_default_user() {
     # User exists — check if keys need updating
     local current_access
     current_access=$(radosgw-admin -c "${CEPH_CONF}" user info --uid=zippy 2>/dev/null \
-      | python3 -c "import sys,json; print(json.load(sys.stdin)['keys'][0]['access_key'])" 2>/dev/null || echo "")
+      | python3 -c "import sys,json; keys=json.load(sys.stdin).get('keys',[]); print(keys[0]['access_key'] if keys else '')" 2>/dev/null || echo "")
 
     if [[ "${current_access}" != "${desired_access}" ]]; then
       echo "Updating S3 credentials for user zippy..."
       set +e
-      # Remove old key, then add the new one
-      radosgw-admin -c "${CEPH_CONF}" key rm --uid=zippy --access-key="${current_access}" 2>/dev/null
-      radosgw-admin -c "${CEPH_CONF}" key create --uid=zippy \
-        --access-key="${desired_access}" --secret-key="${desired_secret}" 2>/dev/null
+      # Remove and recreate user with new keys (single-user gateway)
+      radosgw-admin -c "${CEPH_CONF}" user rm --uid=zippy 2>/dev/null
+      radosgw-admin -c "${CEPH_CONF}" user create \
+        --uid zippy \
+        --display-name zippy \
+        --access-key "${desired_access}" \
+        --secret-key "${desired_secret}"
       set -e
     fi
   fi

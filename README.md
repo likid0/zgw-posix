@@ -131,15 +131,25 @@ Additional start options:
 
 ### Configure AWS CLI
 
-Add a profile to `~/.aws/credentials` matching your S3 credentials:
+Add a profile to `~/.aws/config` and `~/.aws/credentials` matching your S3 credentials:
 
 ```ini
+# ~/.aws/credentials
 [zgw]
 aws_access_key_id = zippy
 aws_secret_access_key = zippy
 ```
 
-If you set custom credentials (see [S3 Credentials](#s3-credentials)), use those values instead.
+```ini
+# ~/.aws/config
+[profile zgw]
+region = default
+output = json
+```
+
+If you set custom credentials (see [S3 Credentials](#s3-credentials)), update the credentials file to match.
+
+> **Note:** The `region` setting is required by the AWS CLI even though zgw-posix ignores it. Without it you'll get `argument of type 'NoneType' is not iterable`.
 
 Use it with:
 
