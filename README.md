@@ -31,14 +31,56 @@ Choose your deployment method:
 ./bin/start-posix.sh
 
 # 2. Create a bucket and upload a file
-AWS_ACCESS_KEY_ID=zippy AWS_SECRET_ACCESS_KEY=zippy \
-  aws --endpoint-url http://localhost:9090 s3 mb s3://mybucket
-
-AWS_ACCESS_KEY_ID=zippy AWS_SECRET_ACCESS_KEY=zippy \
-  aws --endpoint-url http://localhost:9090 s3 cp /etc/hosts s3://mybucket/hosts
+aws --profile zgw --endpoint-url http://localhost:9090 s3 mb s3://mybucket
+aws --profile zgw --endpoint-url http://localhost:9090 s3 cp /etc/hosts s3://mybucket/hosts
 
 # 3. Verify the file exists on the filesystem
 ls ~/zgw-data/posix/mybucket/
+```
+
+---
+
+## S3 Credentials
+
+All deployment methods use the same default credentials: **`zippy` / `zippy`**. There is a single S3 user (`zippy`) created at container startup. To use custom credentials, set them **before** the container starts — they cannot be changed at runtime without restarting.
+
+### Podman / Docker
+
+Set the environment variables before running the start script:
+
+```bash
+# Option 1: Export before starting
+export AWS_ACCESS_KEY_ID=myaccesskey
+export AWS_SECRET_ACCESS_KEY=mysecretkey
+./bin/start-posix.sh
+
+# Option 2: Inline
+AWS_ACCESS_KEY_ID=myaccesskey AWS_SECRET_ACCESS_KEY=mysecretkey ./bin/start-posix.sh
+```
+
+Then configure your AWS CLI profile to match (see [Configure AWS CLI](#configure-aws-cli) below).
+
+> **Note:** If you change credentials on a restart, the container automatically updates the stored keys to match. Existing data in `~/zgw-data` is preserved and accessible with the new credentials.
+
+### Helm Chart (Kubernetes / OpenShift)
+
+Pass credentials at install time:
+
+```bash
+helm install zgw-posix examples/helm/zgw-posix \
+  --set auth.accessKey=myaccesskey \
+  --set auth.secretKey=mysecretkey
+```
+
+The chart creates a Kubernetes Secret from these values automatically.
+
+### Raw Manifest (Kubernetes / OpenShift)
+
+Edit the Secret in `examples/openshift/zgw-posix.yaml` before applying. Generate base64 values:
+
+```bash
+echo -n 'myaccesskey' | base64   # replace ACCESS_KEY value in the Secret
+echo -n 'mysecretkey' | base64   # replace SECRET_KEY value in the Secret
 ```
 
 ---
@@ -56,8 +98,8 @@ ls ~/zgw-data/posix/mybucket/
 |----------|---------|-------------|
 | `ZGW_DATA_PATH` | `~/zgw-data` | Parent directory for all data (posix/, db/, store/) |
 | `ZGW_POSIX_PORT` | `9090` | Port to expose S3 API |
-| `AWS_ACCESS_KEY_ID` | `zippy` | S3 access key |
-| `AWS_SECRET_ACCESS_KEY` | `zippy` | S3 secret key |
+| `AWS_ACCESS_KEY_ID` | `zippy` | S3 access key (see [S3 Credentials](#s3-credentials)) |
+| `AWS_SECRET_ACCESS_KEY` | `zippy` | S3 secret key (see [S3 Credentials](#s3-credentials)) |
 
 ### Using Helper Scripts
 
@@ -89,13 +131,15 @@ Additional start options:
 
 ### Configure AWS CLI
 
-Add a profile to `~/.aws/credentials`:
+Add a profile to `~/.aws/credentials` matching your S3 credentials:
 
 ```ini
 [zgw]
 aws_access_key_id = zippy
 aws_secret_access_key = zippy
 ```
+
+If you set custom credentials (see [S3 Credentials](#s3-credentials)), use those values instead.
 
 Use it with:
 
@@ -121,15 +165,7 @@ helm install zgw-posix examples/helm/zgw-posix \
   --set persistence.storageClassName=YOUR-STORAGE-CLASS
 ```
 
-To use custom S3 credentials (default: `zippy` / `zippy`):
-
-```bash
-helm install zgw-posix examples/helm/zgw-posix \
-  --namespace zgw --create-namespace \
-  --set persistence.storageClassName=YOUR-STORAGE-CLASS \
-  --set auth.accessKey=MY_ACCESS_KEY \
-  --set auth.secretKey=MY_SECRET_KEY
-```
+To use custom S3 credentials, see [S3 Credentials](#s3-credentials).
 
 ### Verify
 
@@ -156,14 +192,7 @@ For clusters without Helm, use the raw Kubernetes/OpenShift manifest directly.
 - `kubectl` or `oc` CLI configured
 - A StorageClass for persistent volumes
 
-### Custom Credentials
-
-The manifest defaults to `zippy` / `zippy`. To change credentials, generate base64 values and edit the Secret in the YAML before applying:
-
-```bash
-echo -n 'MY_ACCESS_KEY' | base64   # use this for ACCESS_KEY
-echo -n 'MY_SECRET_KEY' | base64   # use this for SECRET_KEY
-```
+To use custom S3 credentials, see [S3 Credentials](#s3-credentials).
 
 ### Deploy on OpenShift
 

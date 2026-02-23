@@ -11,7 +11,7 @@
 | `storage.size` | Size of the PVC | `20Gi` |
 | `storage.storageClass` | Storage class for the PVC | `""` (default) |
 | `storage.accessMode` | PVC Access Mode | `ReadWriteOnce` |
-| `credentials.accessKey` | Base64 encoded S3 Access Key | `emlwcHk=` |
-| `credentials.secretKey` | Base64 encoded S3 Secret Key | `emlwcHk=` |
+| `auth.accessKey` | S3 Access Key (auto base64-encoded by the chart) | `zippy` |
+| `auth.secretKey` | S3 Secret Key (auto base64-encoded by the chart) | `zippy` |
 | `openshift.enabled` | Enable OpenShift specific resources (SCC, Route) | `true` |
 | `openshift.route.ssl.enabled` | Enable SSL for OpenShift Route | `true` |

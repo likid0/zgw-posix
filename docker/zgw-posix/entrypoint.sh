@@ -36,15 +36,33 @@ create_default_user() {
   ensure_paths
   create_ceph_conf
 
+  local desired_access="${AWS_ACCESS_KEY_ID:-zippy}"
+  local desired_secret="${AWS_SECRET_ACCESS_KEY:-zippy}"
+
   if ! radosgw-admin -c "${CEPH_CONF}" user info --uid=zippy &>/dev/null; then
-    # Don't fail container start if this command errors
+    # User doesn't exist — create it
     set +e
     radosgw-admin -c "${CEPH_CONF}" user create \
       --uid zippy \
       --display-name zippy \
-      --access-key "${AWS_ACCESS_KEY_ID:-zippy}" \
-      --secret-key "${AWS_SECRET_ACCESS_KEY:-zippy}"
+      --access-key "${desired_access}" \
+      --secret-key "${desired_secret}"
     set -e
+  else
+    # User exists — check if keys need updating
+    local current_access
+    current_access=$(radosgw-admin -c "${CEPH_CONF}" user info --uid=zippy 2>/dev/null \
+      | python3 -c "import sys,json; print(json.load(sys.stdin)['keys'][0]['access_key'])" 2>/dev/null || echo "")
+
+    if [[ "${current_access}" != "${desired_access}" ]]; then
+      echo "Updating S3 credentials for user zippy..."
+      set +e
+      # Remove old key, then add the new one
+      radosgw-admin -c "${CEPH_CONF}" key rm --uid=zippy --access-key="${current_access}" 2>/dev/null
+      radosgw-admin -c "${CEPH_CONF}" key create --uid=zippy \
+        --access-key="${desired_access}" --secret-key="${desired_secret}" 2>/dev/null
+      set -e
+    fi
   fi
 
   # Fix ownership of LMDB files created by radosgw-admin (runs as root).
