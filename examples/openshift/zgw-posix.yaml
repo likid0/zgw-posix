@@ -13,7 +13,8 @@
 #   - ConfigMap: Ceph configuration, AWS CLI config, and shell helpers
 #   - PersistentVolumeClaim: Single PVC for all data (uses subPath mounts)
 #   - Deployment: The zgw-posix container with resource limits and health probes
-#   - Service: Exposes S3 API on port 80
+#   - Service: Exposes S3 API on port 80 (and 443 when pod-level TLS is enabled)
+#   - Route: External access via OpenShift router
 #
 # Usage (OpenShift):
 #   oc new-project zgw
@@ -27,6 +28,25 @@
 # Access:
 #   Within cluster: http://s3-posix.<namespace>.svc.cluster.local
 #
+# -----------------------------------------------------------------------------
+# POD-LEVEL TLS (HTTPS at the RGW pod, passthrough route)
+# -----------------------------------------------------------------------------
+# By default the Route terminates TLS at the OpenShift router (edge). To
+# terminate TLS inside the pod instead (end-to-end encryption), follow the
+# steps marked with [TLS] comments throughout this file:
+#
+#   Option A — OCP Service Serving Certificate (zero cert management, OCP only):
+#     1. Uncomment the annotation block in the Service.
+#     2. Uncomment port 443 in the Service.
+#     3. Uncomment port 7443, env vars, and volume/volumeMount in the Deployment.
+#     4. Replace the Route tls section with the passthrough block.
+#     OCP will auto-create a cluster-signed secret named zgw-posix-serving-cert.
+#
+#   Option B — Bring Your Own TLS Secret (cert-manager or manual):
+#     1. Create a TLS secret first:
+#          kubectl create secret tls zgw-posix-tls --cert=server.crt --key=server.key
+#     2. Follow the same [TLS] steps above but replace the secret name
+#        zgw-posix-serving-cert with your secret name in the volume reference.
 # =============================================================================
 
 ---
@@ -296,6 +316,13 @@ spec:
         # Writable home directory for ceph user
         - name: ceph-home
           emptyDir: {}
+        # [TLS] Uncomment to mount TLS secret.
+        # For Option A (OCP serving cert), the secret is auto-created by OCP.
+        # For Option B (BYO), create the secret manually before applying.
+        # - name: tls-certs
+        #   secret:
+        #     secretName: zgw-posix-serving-cert   # Option A: OCP auto-cert
+        #     # secretName: zgw-posix-tls          # Option B: BYO secret
 
       containers:
       - name: zgw-posix
@@ -304,6 +331,10 @@ spec:
         - containerPort: 7480
           name: s3
           protocol: TCP
+        # [TLS] Uncomment to expose HTTPS on port 7443:
+        # - containerPort: 7443
+        #   name: s3-https
+        #   protocol: TCP
 
         # Resource requests and limits
         resources:
@@ -345,6 +376,10 @@ spec:
             name: zgw-config
             subPath: bashrc
             readOnly: true
+          # [TLS] Uncomment to mount the TLS secret (OCP auto-cert or BYO):
+          # - mountPath: /etc/ceph/tls
+          #   name: tls-certs
+          #   readOnly: true
 
         env:
           # Component identifier
@@ -371,6 +406,13 @@ spec:
                 name: zgw-posix-user
                 key: ACCESS_KEY
                 optional: false
+          # [TLS] Uncomment to enable HTTPS at the pod level:
+          # - name: RGW_TLS_ENABLED
+          #   value: "true"
+          # - name: RGW_TLS_CERT_PATH
+          #   value: /etc/ceph/tls/tls.crt
+          # - name: RGW_TLS_KEY_PATH
+          #   value: /etc/ceph/tls/tls.key
 
         # Liveness probe: Is the process alive?
         livenessProbe:
@@ -403,6 +445,11 @@ metadata:
     app.kubernetes.io/name: zgw-posix
     app.kubernetes.io/component: service
     app.kubernetes.io/part-of: zgw
+  # [TLS] Option A: Uncomment to have OCP auto-generate a cluster-signed TLS secret.
+  # The secret 'zgw-posix-serving-cert' will be created automatically with
+  # CN=s3-posix.<namespace>.svc and mounted into the pod.
+  # annotations:
+  #   service.beta.openshift.io/serving-cert-secret-name: zgw-posix-serving-cert
 spec:
   selector:
     app.kubernetes.io/name: zgw-posix
@@ -411,6 +458,11 @@ spec:
       port: 80
       targetPort: 7480
       name: s3
+  # [TLS] Uncomment to expose HTTPS on port 443 -> pod port 7443:
+  # - protocol: TCP
+  #   port: 443
+  #   targetPort: 7443
+  #   name: s3-https
 
 ---
 # -----------------------------------------------------------------------------
@@ -432,12 +484,20 @@ spec:
     kind: Service
     name: s3-posix
     weight: 100
+  # Default: TLS terminated at the OpenShift router (edge), plain HTTP to the pod.
   port:
     targetPort: s3
   tls:
     termination: edge
     insecureEdgeTerminationPolicy: Redirect
   wildcardPolicy: None
+  # [TLS] To terminate TLS inside the pod (passthrough), replace the port and
+  # tls blocks above with the following:
+  # port:
+  #   targetPort: s3-https
+  # tls:
+  #   termination: passthrough
+  #   insecureEdgeTerminationPolicy: Redirect
 
 # -----------------------------------------------------------------------------
 # Ingress: External access to S3 API (Kubernetes alternative)
