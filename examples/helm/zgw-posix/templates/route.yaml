@@ -10,10 +10,18 @@ spec:
     kind: Service
     name: {{ .Values.service.name | default (include "zgw-posix.fullname" .) }}
     weight: 100
+  {{- if .Values.podTLS.enabled }}
+  port:
+    targetPort: s3-https
+  tls:
+    termination: passthrough
+    insecureEdgeTerminationPolicy: Redirect
+  {{- else }}
   port:
     targetPort: s3
   tls:
-    termination: edge
+    termination: {{ .Values.openshift.route.termination | default "edge" }}
     insecureEdgeTerminationPolicy: Redirect
+  {{- end }}
   wildcardPolicy: None
 {{- end }}

@@ -40,3 +40,15 @@ Selector labels
 app.kubernetes.io/name: {{ include "zgw-posix.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
+
+{{/*
+Name of the TLS secret to mount for pod-level TLS.
+Priority: existingSecret > openshiftServingCert (auto-named by OCP).
+*/}}
+{{- define "zgw-posix.tlsSecretName" -}}
+{{- if .Values.podTLS.existingSecret -}}
+  {{- .Values.podTLS.existingSecret -}}
+{{- else if .Values.podTLS.openshiftServingCert -}}
+  {{- include "zgw-posix.fullname" . }}-serving-cert
+{{- end -}}
+{{- end -}}

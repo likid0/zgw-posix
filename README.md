@@ -97,7 +97,11 @@ echo -n 'mysecretkey' | base64   # replace SECRET_KEY value in the Secret
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ZGW_DATA_PATH` | `~/zgw-data` | Parent directory for all data (posix/, db/, store/) |
-| `ZGW_POSIX_PORT` | `9090` | Port to expose S3 API |
+| `ZGW_POSIX_PORT` | `9090` | Port to expose S3 API over HTTP |
+| `ZGW_HTTPS_PORT` | `9443` | Port to expose S3 API over HTTPS (requires `ZGW_TLS_ENABLED=true`) |
+| `ZGW_TLS_ENABLED` | `false` | Enable HTTPS on the gateway |
+| `ZGW_TLS_CERT` | _(auto-generated)_ | Path to TLS certificate file; auto-generates self-signed if not set |
+| `ZGW_TLS_KEY` | _(auto-generated)_ | Path to TLS private key file |
 | `AWS_ACCESS_KEY_ID` | `zippy` | S3 access key (see [S3 Credentials](#s3-credentials)) |
 | `AWS_SECRET_ACCESS_KEY` | `zippy` | S3 secret key (see [S3 Credentials](#s3-credentials)) |
 
@@ -128,6 +132,28 @@ Additional start options:
 ./bin/start-posix.sh --image quay.io/dparkes/zgw-posix:latest  # Custom image
 ./bin/start-posix.sh --name my-s3-gateway   # Custom container name
 ```
+
+### HTTPS (TLS)
+
+Enable HTTPS with a self-signed certificate (auto-generated on first run, reused on restart):
+
+```bash
+./bin/start-posix.sh --https
+```
+
+S3 clients need `--no-verify-ssl` for self-signed certificates:
+
+```bash
+aws --endpoint-url https://localhost:9443 --no-verify-ssl --region default s3 ls
+```
+
+Use your own certificate:
+
+```bash
+./bin/start-posix.sh --https --cert /path/to/server.crt --key /path/to/server.key
+```
+
+HTTP (port 9090) and HTTPS (port 9443) run simultaneously. The self-signed certificate is stored in `$ZGW_DATA_PATH/tls/` and is valid for 10 years.
 
 ### Configure AWS CLI
 
@@ -239,8 +265,8 @@ kubectl get pods -l app.kubernetes.io/name=zgw-posix
 - **ConfigMap**: Ceph configuration
 - **PVC**: Single persistent volume for all data (uses subPath mounts)
 - **Deployment**: The zgw-posix container with resource limits and health probes
-- **Service**: S3 API exposed at `http://s3-posix.<namespace>.svc.cluster.local`
-- **Route**: External access via OpenShift router (HTTPS with TLS termination)
+- **Service**: S3 API exposed at `http://s3-posix.<namespace>.svc.cluster.local` (HTTP port 80); port 443 added when pod-level TLS is enabled
+- **Route**: External access via OpenShift router (edge TLS termination by default; passthrough when pod-level TLS is enabled)
 
 ### External Access (OpenShift Route)
 
@@ -259,6 +285,39 @@ aws --endpoint-url https://s3-posix-zgw.apps.mycluster.example.com \
 ```
 
 For Kubernetes clusters without OpenShift, uncomment the Ingress resource in the manifest and configure your domain.
+
+### Pod-level TLS (HTTPS at the RGW pod, passthrough route)
+
+By default the Route terminates TLS at the OpenShift router (edge). To terminate TLS inside the pod instead — so traffic is encrypted end-to-end — enable pod-level TLS via the Helm chart:
+
+**Option A — OpenShift service serving certificate (recommended for OCP, no cert-manager needed):**
+
+```bash
+helm install zgw-posix examples/helm/zgw-posix \
+  --namespace zgw \
+  --set podTLS.enabled=true \
+  --set podTLS.openshiftServingCert=true
+```
+
+OCP automatically issues a cluster-signed certificate for `CN=s3-posix.<namespace>.svc` and injects it into the pod. The Route is reconfigured to use `passthrough` termination.
+
+**Option B — Bring your own TLS secret (cert-manager or manual):**
+
+```bash
+# Create a TLS secret first (e.g. from cert-manager or manually)
+kubectl create secret tls zgw-posix-tls --cert=server.crt --key=server.key -n zgw
+
+helm install zgw-posix examples/helm/zgw-posix \
+  --namespace zgw \
+  --set podTLS.enabled=true \
+  --set podTLS.existingSecret=zgw-posix-tls
+```
+
+When pod-level TLS is enabled the Service exposes both port 80 (HTTP) and port 443 (HTTPS). Internal consumers can reach the HTTPS endpoint at:
+
+```
+https://s3-posix.<namespace>.svc.cluster.local
+```
 
 ### Test S3 Operations from the Cluster
 

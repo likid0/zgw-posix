@@ -22,7 +22,56 @@ openshift:
   enabled: true
   route:
     enabled: true
+    # termination modes:
+    #   edge        - TLS terminated at the Route, HTTP to pod (default)
+    #   passthrough - TLS terminated at the pod (requires podTLS.enabled)
     termination: edge
+
+# Pod-level TLS — radosgw serves HTTPS directly on port 7443.
+# When enabled, the Route uses passthrough termination and the Ingress
+# uses ssl-passthrough, so traffic is encrypted all the way to the pod.
+#
+# Certificate source — choose one:
+#   openshiftServingCert: true   OCP auto-generates a signed cert (OCP only,
+#                                no cert-manager needed). Recommended for OCP.
+#   existingSecret: "my-secret"  A pre-created TLS secret (tls.crt / tls.key),
+#                                e.g. managed by cert-manager.
+podTLS:
+  enabled: false
+  # OpenShift service serving certificate (OCP only).
+  # Annotates the Service so OCP injects a cluster-signed cert into a Secret.
+  openshiftServingCert: false
+  # Bring your own TLS secret (cert-manager, manual, etc.).
+  # Secret must contain keys: tls.crt and tls.key
+  existingSecret: ""
+
+# Kubernetes Ingress (for non-OpenShift deployments)
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  # nginx.ingress.kubernetes.io/ssl-redirect: "true"
+  hosts: []
+  # - host: zgw-posix.example.com
+  #   paths:
+  #     - path: /
+  #       pathType: Prefix
+  tls: []
+  # - secretName: zgw-posix-tls
+  #   hosts:
+  #     - zgw-posix.example.com
+
+# Quota configuration — applied to the default gateway user via radosgw-admin.
+# Sizes accept suffixes: K, M, G, T  (e.g. "50G"). -1 = unlimited.
+quotas:
+  user:
+    enabled: false
+    maxSize: ""       # total storage across all buckets (e.g. "50G")
+    maxObjects: ""    # total object count (-1 = unlimited)
+  bucket:
+    enabled: false
+    maxSize: ""       # per-bucket storage limit (e.g. "10G")
+    maxObjects: ""    # per-bucket object count (-1 = unlimited)
 
 resources:
   requests:

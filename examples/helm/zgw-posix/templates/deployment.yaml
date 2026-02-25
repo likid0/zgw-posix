@@ -36,6 +36,11 @@ spec:
         - containerPort: {{ .Values.service.targetPort }}
           name: s3
           protocol: TCP
+        {{- if .Values.podTLS.enabled }}
+        - containerPort: 7443
+          name: s3-https
+          protocol: TCP
+        {{- end }}
         resources:
           {{- toYaml .Values.resources | nindent 10 }}
         env:
@@ -57,6 +62,26 @@ spec:
             secretKeyRef:
               name: {{ include "zgw-posix.fullname" . }}-user
               key: SECRET_KEY
+        {{- if .Values.podTLS.enabled }}
+        - name: RGW_TLS_ENABLED
+          value: "true"
+        - name: RGW_TLS_CERT_PATH
+          value: /etc/ceph/tls/tls.crt
+        - name: RGW_TLS_KEY_PATH
+          value: /etc/ceph/tls/tls.key
+        {{- end }}
+        {{- if .Values.quotas.user.enabled }}
+        - name: RGW_USER_QUOTA_MAX_SIZE
+          value: {{ .Values.quotas.user.maxSize | quote }}
+        - name: RGW_USER_QUOTA_MAX_OBJECTS
+          value: {{ .Values.quotas.user.maxObjects | quote }}
+        {{- end }}
+        {{- if .Values.quotas.bucket.enabled }}
+        - name: RGW_BUCKET_QUOTA_MAX_SIZE
+          value: {{ .Values.quotas.bucket.maxSize | quote }}
+        - name: RGW_BUCKET_QUOTA_MAX_OBJECTS
+          value: {{ .Values.quotas.bucket.maxObjects | quote }}
+        {{- end }}
         volumeMounts:
         - mountPath: /var/lib/ceph/rgw_posix_driver
           name: zgw-data
@@ -81,17 +106,29 @@ spec:
           name: zgw-config
           subPath: bashrc
           readOnly: true
+        {{- if .Values.podTLS.enabled }}
+        - mountPath: /etc/ceph/tls
+          name: tls-certs
+          readOnly: true
+        {{- end }}
         livenessProbe:
           tcpSocket:
-            port: 7480
+            port: {{ if .Values.podTLS.enabled }}s3-https{{ else }}s3{{ end }}
           initialDelaySeconds: 30
           periodSeconds: 10
           timeoutSeconds: 5
           failureThreshold: 3
         readinessProbe:
+          {{- if .Values.podTLS.enabled }}
+          # httpGet cannot verify self-signed/internal certs; tcpSocket is used
+          # when TLS is terminated at the pod.
+          tcpSocket:
+            port: s3-https
+          {{- else }}
           httpGet:
             path: /
-            port: 7480
+            port: s3
+          {{- end }}
           initialDelaySeconds: 10
           periodSeconds: 5
           timeoutSeconds: 3
@@ -105,3 +142,9 @@ spec:
           name: {{ include "zgw-posix.fullname" . }}-cm
       - name: ceph-home
         emptyDir: {}
+      {{- if .Values.podTLS.enabled }}
+      - name: tls-certs
+        secret:
+          secretName: {{ include "zgw-posix.tlsSecretName" . }}
+          defaultMode: 0640
+      {{- end }}
