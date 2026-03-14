@@ -2,14 +2,17 @@
 #
 # start-posix.sh - Start the zgw-posix S3 gateway container
 #
+# Uses named volumes for all persistent data so the script works identically
+# on Linux and macOS (Podman or Docker). Named volumes are managed by the
+# container runtime and avoid APFS/bind-mount permission issues on macOS.
+#
 # Environment Variables:
-#   ZGW_DATA_PATH         - Single parent directory for all data (default: ~/zgw-data)
-#                           Contains: posix/, db/, store/, tls/ subdirectories
 #   ZGW_POSIX_PORT        - Port to expose S3 API over HTTP (default: 9090)
 #   ZGW_HTTPS_PORT        - Port to expose S3 API over HTTPS (default: 9443)
 #   ZGW_TLS_ENABLED       - Enable HTTPS (default: false)
 #   ZGW_TLS_CERT          - Path to TLS certificate file (auto-generated if not set)
 #   ZGW_TLS_KEY           - Path to TLS private key file (auto-generated if not set)
+#   ZGW_TLS_DIR           - Directory for auto-generated TLS certs (default: ~/.zgw-posix/tls)
 #   AWS_ACCESS_KEY_ID     - S3 access key (default: zippy)
 #   AWS_SECRET_ACCESS_KEY - S3 secret key (default: zippy)
 #
@@ -24,27 +27,22 @@ SCRIPT_NAME="$(basename "$0")"
 CONTAINER_NAME="zgw-posix"
 DEFAULT_IMAGE="zgw-posix:latest"
 
-# Single data directory with subdirectories
-ZGW_DATA_PATH="${ZGW_DATA_PATH:-${HOME}/zgw-data}"
 ZGW_POSIX_PORT="${ZGW_POSIX_PORT:-9090}"
 ZGW_HTTPS_PORT="${ZGW_HTTPS_PORT:-9443}"
 
-# Credentials
 AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-zippy}"
 AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-zippy}"
 
-# TLS options
 ZGW_TLS_ENABLED="${ZGW_TLS_ENABLED:-false}"
 ZGW_TLS_CERT="${ZGW_TLS_CERT:-}"
 ZGW_TLS_KEY="${ZGW_TLS_KEY:-}"
+ZGW_TLS_DIR="${ZGW_TLS_DIR:-${HOME}/.zgw-posix/tls}"
 
-# Script options
 VERBOSE=false
 DRY_RUN=false
 FORCE=false
 CUSTOM_NAME=""
 CUSTOM_IMAGE=""
-CUSTOM_DATA_PATH=""
 
 # =============================================================================
 # Colors
@@ -53,7 +51,7 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
 # =============================================================================
 # Utility Functions
@@ -67,14 +65,16 @@ usage() {
     cat <<EOF
 Usage: $SCRIPT_NAME [OPTIONS]
 
-Start the zgw-posix S3 gateway container.
+Start the zgw-posix S3 gateway container (Podman or Docker).
+
+Data is stored in named volumes managed by the container runtime —
+works identically on Linux and macOS without bind-mount permission issues.
 
 Options:
   -h, --help            Show this help message and exit
   -v, --verbose         Enable verbose output
   -n, --dry-run         Show what would be done without executing
   -f, --force           Stop and replace running container
-  -d, --data PATH       Data directory (default: ~/zgw-data)
   --name NAME           Custom container name (default: $CONTAINER_NAME)
   --image IMAGE         Custom image (default: $DEFAULT_IMAGE)
   --https               Enable HTTPS (auto-generates self-signed cert if needed)
@@ -83,25 +83,22 @@ Options:
   --https-port PORT     HTTPS port (default: 9443)
 
 Environment Variables:
-  ZGW_DATA_PATH         Single directory for all data (default: ~/zgw-data)
-                        Subdirectories: posix/, db/, store/, tls/
   ZGW_POSIX_PORT        HTTP port to expose S3 API (default: 9090)
   ZGW_HTTPS_PORT        HTTPS port to expose S3 API (default: 9443)
   ZGW_TLS_ENABLED       Enable HTTPS: true|false (default: false)
   ZGW_TLS_CERT          Path to TLS certificate file
   ZGW_TLS_KEY           Path to TLS private key file
+  ZGW_TLS_DIR           Directory for auto-generated TLS certs (default: ~/.zgw-posix/tls)
   AWS_ACCESS_KEY_ID     S3 access key (default: zippy)
   AWS_SECRET_ACCESS_KEY S3 secret key (default: zippy)
 
-Directory Structure:
-  <ZGW_DATA_PATH>/
-  ├── posix/    S3 objects stored as files
-  ├── db/       Metadata database (LMDB)
-  ├── store/    Backend store (users, policies)
-  └── tls/      TLS certificates (auto-generated if --https and no --cert/--key)
+Named Volumes (created automatically, named after the container):
+  <name>-posix   S3 objects stored as files
+  <name>-db      Metadata database (LMDB)
+  <name>-store   Backend store (users, policies)
 
 Examples:
-  # Start with defaults (HTTP only, uses ~/zgw-data)
+  # Start with defaults (HTTP only)
   $SCRIPT_NAME
 
   # Start with HTTPS (auto-generates self-signed cert)
@@ -110,8 +107,8 @@ Examples:
   # Start with HTTPS using your own certificate
   $SCRIPT_NAME --https --cert /path/to/server.crt --key /path/to/server.key
 
-  # Start with custom data directory and HTTPS
-  $SCRIPT_NAME -d /mnt/s3-storage --https
+  # Force restart
+  $SCRIPT_NAME --force
 
   # Dry run to see what would happen
   $SCRIPT_NAME --dry-run --https
@@ -125,51 +122,16 @@ EOF
 # =============================================================================
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        -h|--help)
-            usage
-            ;;
-        -v|--verbose)
-            VERBOSE=true
-            shift
-            ;;
-        -n|--dry-run)
-            DRY_RUN=true
-            shift
-            ;;
-        -f|--force)
-            FORCE=true
-            shift
-            ;;
-        -d|--data)
-            CUSTOM_DATA_PATH="$2"
-            shift 2
-            ;;
-        --name)
-            CUSTOM_NAME="$2"
-            shift 2
-            ;;
-        --image)
-            CUSTOM_IMAGE="$2"
-            shift 2
-            ;;
-        --https)
-            ZGW_TLS_ENABLED=true
-            shift
-            ;;
-        --cert)
-            ZGW_TLS_CERT="$2"
-            ZGW_TLS_ENABLED=true
-            shift 2
-            ;;
-        --key)
-            ZGW_TLS_KEY="$2"
-            ZGW_TLS_ENABLED=true
-            shift 2
-            ;;
-        --https-port)
-            ZGW_HTTPS_PORT="$2"
-            shift 2
-            ;;
+        -h|--help)        usage ;;
+        -v|--verbose)     VERBOSE=true;           shift ;;
+        -n|--dry-run)     DRY_RUN=true;           shift ;;
+        -f|--force)       FORCE=true;             shift ;;
+        --name)           CUSTOM_NAME="$2";       shift 2 ;;
+        --image)          CUSTOM_IMAGE="$2";      shift 2 ;;
+        --https)          ZGW_TLS_ENABLED=true;   shift ;;
+        --cert)           ZGW_TLS_CERT="$2"; ZGW_TLS_ENABLED=true; shift 2 ;;
+        --key)            ZGW_TLS_KEY="$2";  ZGW_TLS_ENABLED=true; shift 2 ;;
+        --https-port)     ZGW_HTTPS_PORT="$2";    shift 2 ;;
         *)
             error "Unknown option: $1"
             echo "Use --help for usage information"
@@ -178,62 +140,54 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Apply custom options
-[[ -n "$CUSTOM_NAME" ]] && CONTAINER_NAME="$CUSTOM_NAME"
+[[ -n "$CUSTOM_NAME" ]]  && CONTAINER_NAME="$CUSTOM_NAME"
 [[ -n "$CUSTOM_IMAGE" ]] && DEFAULT_IMAGE="$CUSTOM_IMAGE"
-[[ -n "$CUSTOM_DATA_PATH" ]] && ZGW_DATA_PATH="$CUSTOM_DATA_PATH"
 
-# Derive subdirectory paths
-ZGW_POSIX_PATH="${ZGW_DATA_PATH}/posix"
-ZGW_DB_PATH="${ZGW_DATA_PATH}/db"
-ZGW_STORE_PATH="${ZGW_DATA_PATH}/store"
-ZGW_TLS_DIR="${ZGW_DATA_PATH}/tls"
+# Named volume names — derived from container name so multiple instances don't clash
+VOL_POSIX="${CONTAINER_NAME}-posix"
+VOL_DB="${CONTAINER_NAME}-db"
+VOL_STORE="${CONTAINER_NAME}-store"
+
+# =============================================================================
+# Runtime Detection
+# =============================================================================
+detect_runtime() {
+    if command -v podman &>/dev/null; then
+        RUNTIME="podman"
+    elif command -v docker &>/dev/null; then
+        RUNTIME="docker"
+    else
+        error "Neither podman nor docker found in PATH"
+        exit 1
+    fi
+    debug "Container runtime: $RUNTIME"
+}
 
 # =============================================================================
 # Dependency Checks
 # =============================================================================
 check_dependencies() {
-    debug "Checking dependencies..."
-
-    if ! command -v podman &> /dev/null; then
-        error "podman is not installed or not in PATH"
-        exit 1
-    fi
+    detect_runtime
 
     if [[ "$ZGW_TLS_ENABLED" == "true" && -z "$ZGW_TLS_CERT" ]]; then
-        if ! command -v openssl &> /dev/null; then
+        if ! command -v openssl &>/dev/null; then
             error "openssl is required to generate a self-signed certificate (not found in PATH)"
             error "Either install openssl or provide --cert and --key"
             exit 1
         fi
     fi
-
-    debug "podman found: $(command -v podman)"
 }
 
 # =============================================================================
-# Directory Validation
+# Volume Management
 # =============================================================================
-validate_directories() {
-    debug "Validating directories..."
-
-    local dirs=("$ZGW_POSIX_PATH" "$ZGW_DB_PATH" "$ZGW_STORE_PATH")
-    [[ "$ZGW_TLS_ENABLED" == "true" ]] && dirs+=("$ZGW_TLS_DIR")
-
-    for dir in "${dirs[@]}"; do
-        if [[ ! -d "$dir" ]]; then
-            debug "Creating directory: $dir"
-            if [[ "$DRY_RUN" == true ]]; then
-                info "[DRY-RUN] Would create directory: $dir"
-            else
-                mkdir -p "$dir" || {
-                    error "Failed to create directory: $dir"
-                    exit 1
-                }
-                info "Created directory: $dir"
-            fi
+ensure_volumes() {
+    for vol in "$VOL_POSIX" "$VOL_DB" "$VOL_STORE"; do
+        if [[ "$DRY_RUN" == true ]]; then
+            info "[DRY-RUN] Would create volume: $vol"
         else
-            debug "Directory exists: $dir"
+            $RUNTIME volume create "$vol" 2>/dev/null || true
+            debug "Volume ready: $vol"
         fi
     done
 }
@@ -244,21 +198,13 @@ validate_directories() {
 ensure_tls_cert() {
     [[ "$ZGW_TLS_ENABLED" != "true" ]] && return 0
 
-    # Use provided cert/key if specified
     if [[ -n "$ZGW_TLS_CERT" && -n "$ZGW_TLS_KEY" ]]; then
-        if [[ ! -f "$ZGW_TLS_CERT" ]]; then
-            error "TLS certificate not found: $ZGW_TLS_CERT"
-            exit 1
-        fi
-        if [[ ! -f "$ZGW_TLS_KEY" ]]; then
-            error "TLS key not found: $ZGW_TLS_KEY"
-            exit 1
-        fi
+        [[ ! -f "$ZGW_TLS_CERT" ]] && { error "TLS certificate not found: $ZGW_TLS_CERT"; exit 1; }
+        [[ ! -f "$ZGW_TLS_KEY" ]]  && { error "TLS key not found: $ZGW_TLS_KEY"; exit 1; }
         info "Using provided TLS certificate: $ZGW_TLS_CERT"
         return 0
     fi
 
-    # Auto-generate self-signed cert into the tls/ data subdirectory
     local cert_file="${ZGW_TLS_DIR}/tls.crt"
     local key_file="${ZGW_TLS_DIR}/tls.key"
 
@@ -268,6 +214,7 @@ ensure_tls_cert() {
         if [[ "$DRY_RUN" == true ]]; then
             info "[DRY-RUN] Would generate self-signed TLS certificate in ${ZGW_TLS_DIR}/"
         else
+            mkdir -p "$ZGW_TLS_DIR"
             info "Generating self-signed TLS certificate in ${ZGW_TLS_DIR}/ ..."
             openssl req -x509 -newkey rsa:4096 -sha256 -days 3650 -nodes \
                 -keyout "$key_file" \
@@ -277,7 +224,7 @@ ensure_tls_cert() {
                 2>/dev/null
             chmod 600 "$key_file"
             info "Self-signed certificate generated (valid 10 years)"
-            warn "This is a self-signed certificate. S3 clients need --no-verify-ssl or equivalent."
+            warn "Self-signed cert — S3 clients need --no-verify-ssl or equivalent."
         fi
     fi
 
@@ -289,11 +236,11 @@ ensure_tls_cert() {
 # Container Management
 # =============================================================================
 is_container_running() {
-    podman ps -a -f status=running -f name="^${CONTAINER_NAME}$" --format="{{.ID}}" | grep -q .
+    $RUNTIME ps -a -f status=running -f name="^${CONTAINER_NAME}$" --format="{{.ID}}" | grep -q .
 }
 
 container_exists() {
-    podman ps -a -f name="^${CONTAINER_NAME}$" --format="{{.ID}}" | grep -q .
+    $RUNTIME ps -a -f name="^${CONTAINER_NAME}$" --format="{{.ID}}" | grep -q .
 }
 
 stop_container() {
@@ -301,18 +248,19 @@ stop_container() {
     if [[ "$DRY_RUN" == true ]]; then
         info "[DRY-RUN] Would stop and remove container: $CONTAINER_NAME"
     else
-        podman kill "$CONTAINER_NAME" 2>/dev/null || true
-        podman rm "$CONTAINER_NAME" 2>/dev/null || true
+        $RUNTIME kill "$CONTAINER_NAME" 2>/dev/null || true
+        $RUNTIME rm   "$CONTAINER_NAME" 2>/dev/null || true
     fi
 }
 
 start_container() {
     local cmd=(
-        podman run
+        $RUNTIME run
         --name "$CONTAINER_NAME"
-        -v "${ZGW_POSIX_PATH}:/var/lib/ceph/rgw_posix_driver:rw,Z"
-        -v "${ZGW_DB_PATH}:/var/lib/ceph/rgw_posix_db:rw,Z"
-        -v "${ZGW_STORE_PATH}:/var/lib/ceph/radosgw:rw,Z"
+        --privileged
+        -v "${VOL_POSIX}:/var/lib/ceph/rgw_posix_driver:rw"
+        -v "${VOL_DB}:/var/lib/ceph/rgw_posix_db:rw"
+        -v "${VOL_STORE}:/var/lib/ceph/radosgw:rw"
         -e "COMPONENT=zgw-posix"
         -e "AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}"
         -e "AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}"
@@ -322,13 +270,10 @@ start_container() {
     )
 
     if [[ "$ZGW_TLS_ENABLED" == "true" ]]; then
-        # Determine the host directory that contains the certs (for bind mount)
-        local cert_host_dir
+        local cert_host_dir cert_container_dir="/etc/ceph/tls"
         cert_host_dir="$(dirname "${ZGW_TLS_CERT}")"
-        local cert_container_dir="/etc/ceph/tls"
-
         cmd+=(
-            -v "${cert_host_dir}:${cert_container_dir}:ro,Z"
+            -v "${cert_host_dir}:${cert_container_dir}:ro"
             -e "RGW_TLS_ENABLED=true"
             -e "RGW_TLS_CERT_PATH=${cert_container_dir}/$(basename "${ZGW_TLS_CERT}")"
             -e "RGW_TLS_KEY_PATH=${cert_container_dir}/$(basename "${ZGW_TLS_KEY}")"
@@ -338,7 +283,7 @@ start_container() {
 
     cmd+=(-d "$DEFAULT_IMAGE")
 
-    debug "Running command: ${cmd[*]}"
+    debug "Running: ${cmd[*]}"
 
     if [[ "$DRY_RUN" == true ]]; then
         info "[DRY-RUN] Would execute:"
@@ -358,11 +303,12 @@ start_container() {
         echo "  Access Key:     ${AWS_ACCESS_KEY_ID}"
         echo "  Secret Key:     ${AWS_SECRET_ACCESS_KEY}"
         echo ""
-        info "Data Directory: ${ZGW_DATA_PATH}"
-        echo "  posix/  -> S3 objects as files"
-        echo "  db/     -> Metadata database"
-        echo "  store/  -> Users and policies"
-        [[ "$ZGW_TLS_ENABLED" == "true" ]] && echo "  tls/    -> TLS certificates"
+        info "Named Volumes (runtime: $RUNTIME):"
+        echo "  ${VOL_POSIX}  -> S3 objects as files"
+        echo "  ${VOL_DB}     -> Metadata database"
+        echo "  ${VOL_STORE}  -> Users and policies"
+        echo ""
+        echo "  Inspect: $RUNTIME volume inspect ${VOL_POSIX}"
         echo ""
         info "Test with:"
         echo "  aws --endpoint-url http://localhost:${ZGW_POSIX_PORT} s3 ls"
@@ -379,17 +325,10 @@ start_container() {
 # Main
 # =============================================================================
 main() {
-    debug "Starting $SCRIPT_NAME"
-    debug "Container name: $CONTAINER_NAME"
-    debug "Image: $DEFAULT_IMAGE"
-    debug "Data path: $ZGW_DATA_PATH"
-    debug "TLS enabled: $ZGW_TLS_ENABLED"
-    debug "Verbose: $VERBOSE"
-    debug "Dry-run: $DRY_RUN"
-    debug "Force: $FORCE"
+    debug "Container: $CONTAINER_NAME  Image: $DEFAULT_IMAGE  TLS: $ZGW_TLS_ENABLED"
 
     check_dependencies
-    validate_directories
+    ensure_volumes
     ensure_tls_cert
 
     if is_container_running; then
@@ -402,10 +341,7 @@ main() {
             exit 1
         fi
     elif container_exists; then
-        debug "Removing stopped container: $CONTAINER_NAME"
-        if [[ "$DRY_RUN" == false ]]; then
-            podman rm "$CONTAINER_NAME" 2>/dev/null || true
-        fi
+        [[ "$DRY_RUN" == false ]] && $RUNTIME rm "$CONTAINER_NAME" 2>/dev/null || true
     fi
 
     start_container
