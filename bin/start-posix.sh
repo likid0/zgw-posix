@@ -295,9 +295,9 @@ start_container() {
         info "Container started successfully"
         echo ""
         info "Connection Information:"
-        echo "  HTTP  Endpoint: http://localhost:${ZGW_POSIX_PORT}"
+        echo "  HTTP  Endpoint: http://127.0.0.1:${ZGW_POSIX_PORT}"
         if [[ "$ZGW_TLS_ENABLED" == "true" ]]; then
-            echo "  HTTPS Endpoint: https://localhost:${ZGW_HTTPS_PORT}"
+            echo "  HTTPS Endpoint: https://127.0.0.1:${ZGW_HTTPS_PORT}"
             warn "Self-signed cert: add --no-verify-ssl to aws CLI calls"
         fi
         echo "  Access Key:     ${AWS_ACCESS_KEY_ID}"
@@ -311,9 +311,10 @@ start_container() {
         echo "  Inspect: $RUNTIME volume inspect ${VOL_POSIX}"
         echo ""
         info "Test with:"
-        echo "  aws --endpoint-url http://localhost:${ZGW_POSIX_PORT} s3 ls"
+        warn "Use 127.0.0.1, not localhost — rootless Podman only forwards IPv4"
+        echo "  aws --endpoint-url http://127.0.0.1:${ZGW_POSIX_PORT} s3 ls"
         if [[ "$ZGW_TLS_ENABLED" == "true" ]]; then
-            echo "  aws --endpoint-url https://localhost:${ZGW_HTTPS_PORT} --no-verify-ssl s3 ls"
+            echo "  aws --endpoint-url https://127.0.0.1:${ZGW_HTTPS_PORT} --no-verify-ssl s3 ls"
         fi
     else
         error "Failed to start container"
