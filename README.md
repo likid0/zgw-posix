@@ -408,10 +408,34 @@ The `:Z` option tells Podman to relabel the volume content with a private unshar
 
 ## Building the Container
 
-```bash
-# Build with Docker
-docker build -t zgw-posix docker/zgw-posix
+Two build variants are maintained under `docker/`. Each has a `build.sh` that handles all the arguments for you.
 
-# Or with Podman
-podman build -t zgw-posix docker/zgw-posix
+| Variant | Directory | Base image | Use when |
+|---------|-----------|------------|----------|
+| `ceph-ci` | `docker/zgw-posix/` | `quay.ceph.io/ceph-ci/ceph:rgw-standalone` | Tracking the upstream CI image |
+| `ubi9-standalone` | `docker/zgw-posix-standalone/` | `registry.access.redhat.com/ubi9/ubi:latest` | Minimal image (~720 MB) built from an RPM |
+
+### ceph-ci variant
+
+```bash
+./docker/zgw-posix/build.sh
+
+# Custom image tag
+IMAGE=zgw-posix:ceph-ci ./docker/zgw-posix/build.sh
 ```
+
+### ubi9-standalone variant
+
+```bash
+# Default RPM URL is baked into the Dockerfile ARG
+./docker/zgw-posix-standalone/build.sh
+
+# Point at a different RPM (e.g. a newer chacra build or a release URL)
+RPM_URL=https://your-server/path/to/ceph-rgw-standalone-*.rpm \
+  ./docker/zgw-posix-standalone/build.sh
+
+# Custom image tag
+IMAGE=zgw-posix:standalone ./docker/zgw-posix-standalone/build.sh
+```
+
+The standalone variant installs `ceph-rgw-standalone` and its companion `librados2` from the same RPM tree, plus runtime deps from EPEL 9 and CentOS Stream 9 repos (Arrow 9, lmdb, lttng-ust, etc.). The repo files are removed from the final image. The binary entry point is `rgw-standalone` instead of `radosgw`.
