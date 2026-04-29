@@ -38,8 +38,9 @@ RUN dnf install -y \
 # Installed together so rpm can satisfy their circular libceph-common dependency.
 # --nodeps skips the ceph-selinux package dep (SELinux policy is host-managed in containers)
 RUN CHACRA_BASE="$(dirname "${RPM_URL}")" \
+    && LIBRADOS2_URL="${CHACRA_BASE}/$(basename "${RPM_URL}" | sed 's/ceph-rgw-standalone-/librados2-/')" \
     && curl -fsSL "${RPM_URL}" -o /tmp/ceph-rgw-standalone.rpm \
-    && curl -fsSL "${CHACRA_BASE}/librados2-21.0.0-332.gd494ddeb.el9.x86_64.rpm" -o /tmp/librados2.rpm \
+    && curl -fsSL "${LIBRADOS2_URL}" -o /tmp/librados2.rpm \
     && rpm -ivh --nodeps /tmp/librados2.rpm /tmp/ceph-rgw-standalone.rpm \
     && echo "/usr/lib64/ceph" > /etc/ld.so.conf.d/ceph.conf \
     && ldconfig \
